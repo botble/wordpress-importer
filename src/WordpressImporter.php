@@ -136,7 +136,12 @@ class WordpressImporter
                 'username'   => (string)$author->author_login,
             ];
 
-            $newUser = app(UserInterface::class)->getFirstBy(['email' => (string)$author->author_email]);
+            $newUser = app(UserInterface::class)
+                ->getModel()
+                ->where('email', (string)$author->author_email)
+                ->orWhere('username', (string)$author->author_login)
+                ->first();
+
             if (!$newUser) {
                 $newUser = app(UserInterface::class)->createOrUpdate($this->users[(string)$author->author_login]);
             }
