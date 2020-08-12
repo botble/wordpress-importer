@@ -17,6 +17,7 @@ use Botble\Page\Repositories\Interfaces\PageInterface;
 use Botble\Slug\Repositories\Interfaces\SlugInterface;
 use Carbon\Carbon;
 use DB;
+use Exception;
 use File;
 use Hash;
 use Illuminate\Http\UploadedFile;
@@ -451,7 +452,16 @@ class WordpressImporter
     {
         if (!empty($image) && $this->copyImages) {
             $info = pathinfo($image);
-            $contents = file_get_contents($image);
+            try {
+                $contents = file_get_contents($image);
+            } catch (Exception $exception) {
+                return $image;
+            }
+
+            if (empty($contents)) {
+                return $image;
+            }
+
             $file = '/tmp/' . $info['basename'];
             file_put_contents($file, $contents);
             $fileUpload = new UploadedFile($file, File::name($image) . '.' . File::extension($image),
