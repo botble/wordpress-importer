@@ -95,7 +95,7 @@ class WordpressImporter
         Storage::makeDirectory($folder);
 
         Storage::put($folder . '/wordpress-importer.xml', $xmlFile, 'public');
-        $wpXML = Storage::url($folder . '/wordpress-importer.xml');
+        $wpXML = Storage::path($folder . '/wordpress-importer.xml');
 
         $this->wpXML = simplexml_load_file($wpXML, 'SimpleXMLElement', LIBXML_NOCDATA);
 
