@@ -47,7 +47,7 @@ class WordpressImporterController extends BaseController
                 ->setMessage(__('Invalid file type. Please make sure you are uploading a Wordpress XML export file.'));
         }
 
-        $xmlFile = file_get_contents($request->file('wpexport'));
+        $xmlFile = $request->file('wpexport')->getRealPath();
         $isCopyImages = (bool)$request->input('copyimages');
         $timeout = $request->input('timeout', 900);
 

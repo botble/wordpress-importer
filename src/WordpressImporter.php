@@ -21,7 +21,6 @@ use Exception;
 use File;
 use Hash;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Language;
 use Mimey\MimeTypes;
 use RvMedia;
@@ -74,28 +73,18 @@ class WordpressImporter
     protected $userDefaultPassword = 'password';
 
     /**
+     * @param string $wpXML
+     * @param bool $copyImages
+     * @param int $secondsBeforeTimeout
      * @return array
      */
-    public function import(string $xmlFile, bool $copyImages = true, $secondsBeforeTimeout = 900)
+    public function import(string $wpXML, bool $copyImages = true, $secondsBeforeTimeout = 900)
     {
         set_time_limit($secondsBeforeTimeout);
         ini_set('max_execution_time', $secondsBeforeTimeout);
         ini_set('default_socket_timeout', $secondsBeforeTimeout);
 
         $this->copyImages = $copyImages;
-
-        $dir = 'wordpress-importer';
-        $folder = $dir;
-        $counter = 1;
-        while (Storage::exists($folder)) {
-            $folder = $dir . '-' . (string)$counter;
-            $counter += 1;
-        }
-
-        Storage::makeDirectory($folder);
-
-        Storage::put($folder . '/wordpress-importer.xml', $xmlFile, 'public');
-        $wpXML = Storage::path($folder . '/wordpress-importer.xml');
 
         $this->wpXML = simplexml_load_file($wpXML, 'SimpleXMLElement', LIBXML_NOCDATA);
 
@@ -105,8 +94,6 @@ class WordpressImporter
         $this->saveAttachments();
         $this->savePostsAndPages('post');
         $this->savePostsAndPages('page');
-
-        Storage::deleteDirectory($folder);
 
         $this->syncLanguage(Category::class);
         $this->syncLanguage(Tag::class);
@@ -122,8 +109,11 @@ class WordpressImporter
         ];
     }
 
-    // Create new users and load them into array
-    protected function saveAuthors()
+    /**
+     * Create new users and load them into array
+     * @return array
+     */
+    protected function saveAuthors(): array
     {
         $wpData = $this->wpXML->channel->children('wp', true);
 
@@ -149,6 +139,8 @@ class WordpressImporter
             // store the new id in the array
             $this->users[(string)$author->author_login]['id'] = $newUser->id;
         }
+
+        return $this->users;
     }
 
     /**
