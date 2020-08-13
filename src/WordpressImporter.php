@@ -467,9 +467,15 @@ class WordpressImporter
                 return $image;
             }
 
-            $file = '/tmp/' . $info['basename'];
-            file_put_contents($file, $contents);
-            $fileUpload = new UploadedFile($file, File::name($image) . '.' . File::extension($image),
+            $temp_dir = '/tmp/';
+            if(!File::isDirectory($temp_dir)){
+                File::makeDirectory($temp_dir, 0777, true, true);
+            }
+            
+            $path = $temp_dir . $info['basename'];
+            file_put_contents($path, $contents);
+
+            $fileUpload = new UploadedFile($path, File::name($image) . '.' . File::extension($image),
                 (new MimeTypes)->getMimeType(File::extension($image)), null, true);
 
             $result = RvMedia::handleUpload($fileUpload, 0, 'posts');
