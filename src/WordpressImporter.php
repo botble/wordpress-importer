@@ -10,10 +10,8 @@ use Botble\Blog\Models\Category;
 use Botble\Blog\Models\Post;
 use Botble\Blog\Models\Tag;
 use Botble\Blog\Repositories\Interfaces\CategoryInterface;
-use Botble\Blog\Repositories\Interfaces\PostInterface;
 use Botble\Blog\Repositories\Interfaces\TagInterface;
 use Botble\Page\Models\Page;
-use Botble\Page\Repositories\Interfaces\PageInterface;
 use Botble\Slug\Repositories\Interfaces\SlugInterface;
 use Carbon\Carbon;
 use DB;
@@ -296,7 +294,7 @@ class WordpressImporter
 
                 if ($type == 'post') {
 
-                    $post = [
+                    $data = [
                         'author_id'   => !empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->user()->getAuthIdentifier(),
                         'author_type' => User::class,
                         'name'        => trim((string)$item->title, '"'),
@@ -304,13 +302,15 @@ class WordpressImporter
                         'content'     => $this->autop(trim((string)$content->encoded, '" \n')),
                         'image'       => $this->getImage($image),
                         'status'      => $status,
-                        'created_at'  => Carbon::parse((string)$wpData->post_date),
-                        'updated_at'  => Carbon::parse((string)$wpData->post_date),
                     ];
 
-                    $this->posts[] = $post;
+                    $this->posts[] = $data;
 
-                    $post = app(PostInterface::class)->createOrUpdate($post);
+                    $post = new Post;
+                    $post->fill($data);
+                    $post->created_at = Carbon::parse((string)$wpData->post_date);
+                    $post->updated_at = Carbon::parse((string)$wpData->post_date);
+                    $post->save();
 
                     if (!empty($this->categories[$category]['id'])) {
                         $post->categories()->attach($this->categories[$category]['id']);
@@ -320,7 +320,7 @@ class WordpressImporter
 
                 } elseif ($type == 'page') {
 
-                    $page = [
+                    $data = [
                         'user_id'     => !empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->user()->getAuthIdentifier(),
                         'name'        => trim((string)$item->title, '"'),
                         'description' => trim((string)$excerpt->encoded, '" \n'),
@@ -328,13 +328,15 @@ class WordpressImporter
                         'image'       => $this->getImage($image),
                         'status'      => $status,
                         'template'    => 'default',
-                        'created_at'  => Carbon::parse((string)$item->pubDate),
-                        'updated_at'  => Carbon::parse((string)$item->pubDate),
                     ];
 
-                    $this->pages[] = $page;
+                    $this->pages[] = $data;
 
-                    $page = app(PageInterface::class)->createOrUpdate($page);
+                    $page = new Page;
+                    $page->fill($data);
+                    $page->created_at = Carbon::parse((string)$item->pubDate);
+                    $page->updated_at = Carbon::parse((string)$item->pubDate);
+                    $page->save();
 
                     event(new CreatedContentEvent(PAGE_MODULE_SCREEN_NAME, request(), $page));
                 }
@@ -487,26 +489,34 @@ class WordpressImporter
      * @param string $reference
      * @return bool
      */
-    protected function syncLanguage(string $reference)
+    protected function syncLanguage(string $reference): bool
     {
         if (defined('LANGUAGE_MODULE_SCREEN_NAME')) {
-            $data = DB::table((new $reference)->getTable())->get();
-            foreach ($data as $item) {
-                $existed = DB::table('language_meta')
-                    ->where([
-                        'reference_id'   => $item->id,
-                        'reference_type' => $reference,
-                    ])
-                    ->first();
-                if (empty($existed)) {
-                    DB::table('language_meta')->insert([
-                        'reference_id'     => $item->id,
-                        'reference_type'   => $reference,
-                        'lang_meta_code'   => Language::getDefaultLocaleCode(),
-                        'lang_meta_origin' => md5($item->id . $reference . time()),
-                    ]);
-                }
+            if (!Language::getDefaultLanguage()) {
+                return false;
             }
+
+            $ids = DB::table('language_meta')
+                ->where('reference_type', $reference)
+                ->pluck('reference_id')
+                ->all();
+
+            $referenceIds = DB::table((new $reference)->getTable())
+                ->whereNotIn('id', $ids)
+                ->pluck('id')
+                ->all();
+
+            $data = [];
+            foreach ($referenceIds as $referenceId) {
+                $data[] = [
+                    'reference_id'     => $referenceId,
+                    'reference_type'   => $reference,
+                    'lang_meta_code'   => Language::getDefaultLocaleCode(),
+                    'lang_meta_origin' => md5($referenceId . $reference . time()),
+                ];
+            }
+
+            DB::table('language_meta')->insert($data);
         }
 
         return true;
