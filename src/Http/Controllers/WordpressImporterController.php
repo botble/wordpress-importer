@@ -5,7 +5,6 @@ namespace Botble\WordpressImporter\Http\Controllers;
 use Assets;
 use Botble\Base\Http\Controllers\BaseController;
 use Botble\Base\Http\Responses\BaseHttpResponse;
-use Botble\WordpressImporter\Http\Requests\WordpressImporterRequest;
 use Botble\WordpressImporter\WordpressImporter;
 
 class WordpressImporterController extends BaseController
@@ -15,7 +14,8 @@ class WordpressImporterController extends BaseController
      */
     public function index()
     {
-        Assets::addScriptsDirectly('vendor/core/plugins/wordpress-importer/js/wordpress-importer.js');
+        Assets::addScriptsDirectly('vendor/core/plugins/wordpress-importer/js/wordpress-importer.js')
+            ->addStylesDirectly('vendor/core/plugins/wordpress-importer/css/wordpress-importer.css');
 
         page_title()->setTitle(__('Wordpress Importer'));
 
@@ -23,35 +23,21 @@ class WordpressImporterController extends BaseController
     }
 
     /**
-     * @param WordpressImporterRequest $request
      * @param BaseHttpResponse $response
      * @param WordpressImporter $wordpressImporter
      * @return BaseHttpResponse
      */
     public function import(
-        WordpressImporterRequest $request,
         BaseHttpResponse $response,
         WordpressImporter $wordpressImporter
     ) {
-        if (!$request->hasFile('wpexport')) {
+        if ($wordpressImporter->hasError()) {
             return $response
                 ->setError()
-                ->setMessage(__('Please specify a Wordpress XML file that you would like to upload.'));
+                ->setMessage($wordpressImporter->getError());
         }
 
-        $mimeType = $request->file('wpexport')->getMimeType();
-
-        if (!in_array($mimeType, ['text/xml', 'application/xml'])) {
-            return $response
-                ->setError()
-                ->setMessage(__('Invalid file type. Please make sure you are uploading a Wordpress XML export file.'));
-        }
-
-        $xmlFile = $request->file('wpexport')->getRealPath();
-        $isCopyImages = (bool)$request->input('copyimages');
-        $timeout = $request->input('timeout', 900);
-
-        $result = $wordpressImporter->import($xmlFile, $isCopyImages, $timeout);
+        $result = $wordpressImporter->import();
 
         return $response
             ->setMessage(__('Imported :posts posts, :pages pages, :categories categories, :tags tags, and :users users successfully !',
