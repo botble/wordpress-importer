@@ -13,6 +13,8 @@ use Botble\Blog\Repositories\Interfaces\CategoryInterface;
 use Botble\Blog\Repositories\Interfaces\TagInterface;
 use Botble\Page\Models\Page;
 use Botble\Slug\Repositories\Interfaces\SlugInterface;
+use Botble\WordpressImporter\Http\Requests\WordpressImporterRequest;
+use Botble\Slug\Services\SlugService;
 use Carbon\Carbon;
 use DB;
 use Exception;
@@ -66,37 +68,67 @@ class WordpressImporter
     protected $copyImages = true;
 
     /**
+     * @var bool
+     */
+    protected $copyCategories = true;
+
+    /**
+     * @var array
+     */
+    protected $defaultCategory = [];
+
+    /**
+     * @var string
+     */
+    protected $error = '';
+
+    /**
      * @var string
      */
     protected $userDefaultPassword = 'password';
 
     /**
-     * @param string $wpXML
-     * @param bool $copyImages
-     * @param int $secondsBeforeTimeout
+     * @var SlugService
+     */
+    protected $slugService;
+
+    public function __construct(WordpressImporterRequest $request, SlugService $slugService)
+    {
+        $this->slugService = $slugService;
+        $this->verifyRequest($request);
+    }
+
+    /**
      * @return array
      */
-    public function import(string $wpXML, bool $copyImages = true, $secondsBeforeTimeout = 900)
+    public function import()
     {
-        set_time_limit($secondsBeforeTimeout);
-        ini_set('max_execution_time', $secondsBeforeTimeout);
-        ini_set('default_socket_timeout', $secondsBeforeTimeout);
+        if ($this->hasError()) {
+            return [];
+        }
 
-        $this->copyImages = $copyImages;
 
-        $this->wpXML = simplexml_load_file($wpXML, 'SimpleXMLElement', LIBXML_NOCDATA);
-
-        $this->saveAuthors();
-        $this->saveCategories();
-        $this->saveTags();
         $this->saveAttachments();
-        $this->savePostsAndPages('post');
-        $this->savePostsAndPages('page');
 
-        $this->syncLanguage(Category::class);
-        $this->syncLanguage(Tag::class);
-        $this->syncLanguage(Post::class);
-        $this->syncLanguage(Page::class);
+        // if blog plugin is enabled
+        if (defined('POST_MODULE_SCREEN_NAME')) {
+            $this->saveAuthors();
+            if ($this->copyCategories) {
+                $this->saveCategories();
+            }
+            $this->saveTags();
+
+            $this->savePostsAndPages('post');
+            $this->syncLanguage(Category::class);
+            $this->syncLanguage(Tag::class);
+            $this->syncLanguage(Post::class);
+        }
+
+        // if page package is installed with product
+        if (defined('PAGE_MODULE_SCREEN_NAME')) {
+            $this->savePostsAndPages('page');
+            $this->syncLanguage(Page::class);
+        }
 
         return [
             'categories' => count($this->categories),
@@ -116,7 +148,8 @@ class WordpressImporter
         $wpData = $this->wpXML->channel->children('wp', true);
 
         foreach ($wpData->author as $author) {
-            $this->users[(string)$author->author_login] = [
+            $authorLogin = (string)$author->author_login;
+            $this->users[$authorLogin] = [
                 'first_name' => (string)$author->author_first_name,
                 'last_name'  => (string)$author->author_last_name,
                 'email'      => (string)$author->author_email,
@@ -131,7 +164,7 @@ class WordpressImporter
                 ->first();
 
             if (!$newUser) {
-                $newUser = app(UserInterface::class)->createOrUpdate($this->users[(string)$author->author_login]);
+                $newUser = app(UserInterface::class)->createOrUpdate($this->users[$authorLogin]);
             }
 
             // store the new id in the array
@@ -152,24 +185,16 @@ class WordpressImporter
         $order = 1;
         foreach ($wpData->category as $category) {
 
-            $this->categories[(string)$category->category_nicename] = [
-                'order'       => $order,
-                'name'        => (string)$category->cat_name,
-                'description' => (string)$category->category_description,
-                'author_id'   => auth()->user()->getAuthIdentifier(),
-                'author_type' => User::class,
-            ];
-
-            $newCategory = app(CategoryInterface::class)->createOrUpdate($this->categories[(string)$category->category_nicename]);
-
-            request()->merge([
-                'slug' => (string)$category->category_nicename,
-            ]);
-
-            event(new CreatedContentEvent(CATEGORY_MODULE_SCREEN_NAME, request(), $newCategory));
-
-            $this->categories[(string)$category->category_nicename]['parent'] = (string)$category->category_parent;
-            $this->categories[(string)$category->category_nicename]['id'] = $newCategory->id;
+            $categoryName = (string)$category->category_nicename;
+            $this->categories[$categoryName] = $this->createCategory(
+                $categoryName,
+                [
+                    'order'       => $order,
+                    'name'        => (string)$category->cat_name,
+                    'description' => (string)$category->category_description
+                ],
+                (string)$category->category_parent
+            );
 
             $order += 1;
         }
@@ -193,6 +218,36 @@ class WordpressImporter
         }
 
         return $this->categories;
+    }
+
+    /**
+     * @param string $slug
+     * @param array $data
+     * @param null $parent
+     * @return array
+     */
+    protected function createCategory($slug = '', $data = [], $parent = null)
+    {
+        $categoryData = array_merge([
+            'order'       => 1,
+            'name'        => '',
+            'description' => '',
+            'author_id'   => auth()->user()->getAuthIdentifier(),
+            'author_type' => User::class,
+        ], $data);
+
+        $newCategory = app(CategoryInterface::class)->createOrUpdate($categoryData);
+
+        request()->merge([
+            'slug' => $slug,
+        ]);
+
+        event(new CreatedContentEvent(CATEGORY_MODULE_SCREEN_NAME, request(), $newCategory));
+
+        $categoryData['parent'] = $parent;
+        $categoryData['id'] = $newCategory->id;
+
+        return $categoryData;
     }
 
     /**
@@ -312,7 +367,9 @@ class WordpressImporter
                     $post->updated_at = Carbon::parse((string)$wpData->post_date);
                     $post->save();
 
-                    if (!empty($this->categories[$category]['id'])) {
+                    if (!$this->copyCategories && !empty($this->defaultCategory)) {
+                        $post->categories()->attach($this->defaultCategory->id);
+                    } else if (!empty($this->categories[$category]['id'])) {
                         $post->categories()->attach($this->categories[$category]['id']);
                     }
 
@@ -520,5 +577,73 @@ class WordpressImporter
         }
 
         return true;
+    }
+
+    /**
+     * @return bool
+     */
+    public function hasError(): bool
+    {
+        return !empty($this->error);
+    }
+
+    /**
+     * @return string
+     */
+    public function getError()
+    {
+        return $this->error;
+    }
+
+    /**
+     * @param string $message
+     */
+    protected function setError(string $message = ''): void
+    {
+        $this->error = $message;
+    }
+
+    /**
+     * @param WordpressImporterRequest $request
+     */
+    protected function verifyRequest(WordpressImporterRequest $request): void
+    {
+
+        if (!$request->hasFile('wpexport')) {
+            $this->setError(__('Please specify a Wordpress XML file that you would like to upload.'));
+            return;
+        }
+
+        $mimeType = $request->file('wpexport')->getMimeType();
+
+        if (!in_array($mimeType, ['text/xml', 'application/xml'])) {
+            $this->setError(__('Invalid file type. Please make sure you are uploading a Wordpress XML export file.'));
+            return;
+        }
+
+        $xmlFile = $request->file('wpexport')->getRealPath();
+        $timeout = $request->input('timeout', 900);
+
+        set_time_limit($timeout);
+        ini_set('max_execution_time', $timeout);
+        ini_set('default_socket_timeout', $timeout);
+
+        $this->copyImages = (bool)$request->input('copyimages');
+        $this->wpXML = simplexml_load_file($xmlFile, 'SimpleXMLElement', LIBXML_NOCDATA);
+        $this->copyCategories = (bool)$request->input('copy_categories');
+        if ($request->has('category_default')) {
+            $this->defaultCategory = @json_decode(urldecode($request->input('category_default')));
+
+            if ($this->defaultCategory && $this->defaultCategory->slug === 'create-new') {
+                $this->defaultCategory = (object)$this->createCategory(
+                    $this->slugService->create($this->defaultCategory->name, 0, Category::class),
+                    [
+                        'name'          => $this->defaultCategory->name,
+                        'description'   => $this->defaultCategory->name .' description'
+                    ]
+                );
+            }
+        }
+
     }
 }

@@ -18,6 +18,8 @@ class WordpressImporterServiceProvider extends ServiceProvider
      */
     public function register()
     {
+        if (!defined('POST_MODULE_SCREEN_NAME') && !defined('PAGE_MODULE_SCREEN_NAME')) return;
+
         $this->setNamespace('plugins/wordpress-importer')
             ->loadAndPublishViews()
             ->publishAssets()
