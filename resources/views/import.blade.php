@@ -10,7 +10,30 @@
                     @csrf
                     <div class="row">
                         <div class="col-md-6">
-                            @include('plugins/wordpress-importer::options')
+                            <h6>{{ __('Options') }}</h6>
+                            <div class="form-group">
+                                <label for="copyimages" class="control-label">{{ __('Copy Images?') }}</label>
+                                {{ Form::onOff('copyimages', true)  }}
+                                <small class="text-muted d-block">{{ __('Featured images for posts and pages will be copied over to your storage. If you select "No" the image references will remain the same and no images will be copied.') }}</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="copy_categories" class="control-label">{{ __('Copy Categories?') }}</label>
+                                {{ Form::onOff('copy_categories', true)  }}
+                                <small class="text-muted d-block">{{ __('Categories for posts will be copied. If you uncheck you can select default category for all imported posts') }}</small>
+
+                                <div id="category-select" class="widget meta-boxes" style="display: none">
+                                    <div class="widget-title">
+                                        <h4>{{ __('Select default category') }}</h4>
+                                    </div>
+                                    <div class="widget-body">
+                                        <ul>
+                                            <li>{{ __('Loading...') }}</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+
                         </div>
 
                         <div class="col-md-6">
@@ -23,7 +46,7 @@
                             </div>
 
                             <div class="form-group">
-                                <label for="wpexport" class="control-label" data-toggle="tooltip"
+                                <label for="wpexport" class="control-label required" data-toggle="tooltip"
                                        title="{{ __('Inside of your Wordpress Admin you can chose to export data by visiting Tools->Export.') }}"
                                        data-placement="right">{{ __('Wordpress XML file') }}</label><br>
                                 <input type="file" name="wpexport" id="wpexport">

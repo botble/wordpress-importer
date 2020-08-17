@@ -13,13 +13,12 @@ use Botble\Blog\Repositories\Interfaces\CategoryInterface;
 use Botble\Blog\Repositories\Interfaces\TagInterface;
 use Botble\Page\Models\Page;
 use Botble\Slug\Repositories\Interfaces\SlugInterface;
-use Botble\WordpressImporter\Http\Requests\WordpressImporterRequest;
-use Botble\Slug\Services\SlugService;
 use Carbon\Carbon;
 use DB;
 use Exception;
 use File;
 use Hash;
+use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Language;
 use Mimey\MimeTypes;
@@ -73,14 +72,9 @@ class WordpressImporter
     protected $copyCategories = true;
 
     /**
-     * @var array
+     * @var int
      */
-    protected $defaultCategory = [];
-
-    /**
-     * @var string
-     */
-    protected $error = '';
+    protected $defaultCategoryId;
 
     /**
      * @var string
@@ -88,14 +82,44 @@ class WordpressImporter
     protected $userDefaultPassword = 'password';
 
     /**
-     * @var SlugService
+     * @param Request $request
+     * @return array|false[]
      */
-    protected $slugService;
-
-    public function __construct(WordpressImporterRequest $request, SlugService $slugService)
+    public function verifyRequest(Request $request): array
     {
-        $this->slugService = $slugService;
-        $this->verifyRequest($request);
+        if (!$request->hasFile('wpexport')) {
+            return [
+                'error'   => true,
+                'message' => __('Please specify a Wordpress XML file that you would like to upload.'),
+            ];
+        }
+
+        $mimeType = $request->file('wpexport')->getMimeType();
+
+        if (!in_array($mimeType, ['text/xml', 'application/xml'])) {
+            return [
+                'error'   => true,
+                'message' => __('Invalid file type. Please make sure you are uploading a Wordpress XML export file.'),
+            ];
+        }
+
+        $xmlFile = $request->file('wpexport')->getRealPath();
+        $timeout = $request->input('timeout', 900);
+
+        set_time_limit($timeout);
+        ini_set('max_execution_time', $timeout);
+        ini_set('default_socket_timeout', $timeout);
+
+        $this->copyImages = (bool)$request->input('copyimages');
+        $this->wpXML = simplexml_load_file($xmlFile, 'SimpleXMLElement', LIBXML_NOCDATA);
+        $this->copyCategories = (bool)$request->input('copy_categories');
+        if ($request->has('default_category_id')) {
+            $this->defaultCategoryId = $request->input('default_category_id');
+        }
+
+        return [
+            'error' => false,
+        ];
     }
 
     /**
@@ -103,32 +127,20 @@ class WordpressImporter
      */
     public function import()
     {
-        if ($this->hasError()) {
-            return [];
-        }
-
-
         $this->saveAttachments();
+        $this->saveAuthors();
 
-        // if blog plugin is enabled
-        if (defined('POST_MODULE_SCREEN_NAME')) {
-            $this->saveAuthors();
-            if ($this->copyCategories) {
-                $this->saveCategories();
-            }
-            $this->saveTags();
-
-            $this->savePostsAndPages('post');
+        if ($this->copyCategories) {
+            $this->saveCategories();
             $this->syncLanguage(Category::class);
-            $this->syncLanguage(Tag::class);
-            $this->syncLanguage(Post::class);
         }
 
-        // if page package is installed with product
-        if (defined('PAGE_MODULE_SCREEN_NAME')) {
-            $this->savePostsAndPages('page');
-            $this->syncLanguage(Page::class);
-        }
+        $this->saveTags();
+        $this->savePostsAndPages('post');
+        $this->syncLanguage(Tag::class);
+        $this->syncLanguage(Post::class);
+        $this->savePostsAndPages('page');
+        $this->syncLanguage(Page::class);
 
         return [
             'categories' => count($this->categories),
@@ -140,6 +152,23 @@ class WordpressImporter
     }
 
     /**
+     * Save all the attachments in an array
+     * @return array
+     */
+    protected function saveAttachments(): array
+    {
+        foreach ($this->wpXML->channel->item as $item) {
+            // Save The Attachments in an array
+            $wpData = $item->children('wp', true);
+            if ($wpData->post_type == 'attachment') {
+                $this->attachments[(string)$wpData->post_parent] = (string)$wpData->attachment_url;
+            }
+        }
+
+        return $this->attachments;
+    }
+
+    /**
      * Create new users and load them into array
      * @return array
      */
@@ -148,27 +177,27 @@ class WordpressImporter
         $wpData = $this->wpXML->channel->children('wp', true);
 
         foreach ($wpData->author as $author) {
-            $authorLogin = (string)$author->author_login;
-            $this->users[$authorLogin] = [
+            $username = (string)$author->author_login;
+            $this->users[$username] = [
                 'first_name' => (string)$author->author_first_name,
                 'last_name'  => (string)$author->author_last_name,
                 'email'      => (string)$author->author_email,
                 'password'   => Hash::make($this->userDefaultPassword),
-                'username'   => (string)$author->author_login,
+                'username'   => $username,
             ];
 
             $newUser = app(UserInterface::class)
                 ->getModel()
                 ->where('email', (string)$author->author_email)
-                ->orWhere('username', (string)$author->author_login)
+                ->orWhere('username', $username)
                 ->first();
 
             if (!$newUser) {
-                $newUser = app(UserInterface::class)->createOrUpdate($this->users[$authorLogin]);
+                $newUser = app(UserInterface::class)->createOrUpdate($this->users[$username]);
             }
 
             // store the new id in the array
-            $this->users[(string)$author->author_login]['id'] = $newUser->id;
+            $this->users[$username]['id'] = $newUser->id;
         }
 
         return $this->users;
@@ -185,16 +214,24 @@ class WordpressImporter
         $order = 1;
         foreach ($wpData->category as $category) {
 
-            $categoryName = (string)$category->category_nicename;
-            $this->categories[$categoryName] = $this->createCategory(
-                $categoryName,
-                [
-                    'order'       => $order,
-                    'name'        => (string)$category->cat_name,
-                    'description' => (string)$category->category_description
-                ],
-                (string)$category->category_parent
-            );
+            $this->categories[(string)$category->category_nicename] = [
+                'order'       => $order,
+                'name'        => (string)$category->cat_name,
+                'description' => (string)$category->category_description,
+                'author_id'   => auth()->user()->getAuthIdentifier(),
+                'author_type' => User::class,
+            ];
+
+            $newCategory = app(CategoryInterface::class)->createOrUpdate($this->categories[(string)$category->category_nicename]);
+
+            request()->merge([
+                'slug' => (string)$category->category_nicename,
+            ]);
+
+            event(new CreatedContentEvent(CATEGORY_MODULE_SCREEN_NAME, request(), $newCategory));
+
+            $this->categories[(string)$category->category_nicename]['parent'] = (string)$category->category_parent;
+            $this->categories[(string)$category->category_nicename]['id'] = $newCategory->id;
 
             $order += 1;
         }
@@ -221,33 +258,40 @@ class WordpressImporter
     }
 
     /**
-     * @param string $slug
-     * @param array $data
-     * @param null $parent
-     * @return array
+     * @param string $reference
+     * @return bool
      */
-    protected function createCategory($slug = '', $data = [], $parent = null)
+    protected function syncLanguage(string $reference): bool
     {
-        $categoryData = array_merge([
-            'order'       => 1,
-            'name'        => '',
-            'description' => '',
-            'author_id'   => auth()->user()->getAuthIdentifier(),
-            'author_type' => User::class,
-        ], $data);
+        if (defined('LANGUAGE_MODULE_SCREEN_NAME')) {
+            if (!Language::getDefaultLanguage()) {
+                return false;
+            }
 
-        $newCategory = app(CategoryInterface::class)->createOrUpdate($categoryData);
+            $ids = DB::table('language_meta')
+                ->where('reference_type', $reference)
+                ->pluck('reference_id')
+                ->all();
 
-        request()->merge([
-            'slug' => $slug,
-        ]);
+            $referenceIds = DB::table((new $reference)->getTable())
+                ->whereNotIn('id', $ids)
+                ->pluck('id')
+                ->all();
 
-        event(new CreatedContentEvent(CATEGORY_MODULE_SCREEN_NAME, request(), $newCategory));
+            $data = [];
+            foreach ($referenceIds as $referenceId) {
+                $data[] = [
+                    'reference_id'     => $referenceId,
+                    'reference_type'   => $reference,
+                    'lang_meta_code'   => Language::getDefaultLocaleCode(),
+                    'lang_meta_origin' => md5($referenceId . $reference . time()),
+                ];
+            }
 
-        $categoryData['parent'] = $parent;
-        $categoryData['id'] = $newCategory->id;
+            DB::table('language_meta')->insert($data);
+        }
 
-        return $categoryData;
+        return true;
     }
 
     /**
@@ -282,23 +326,6 @@ class WordpressImporter
         }
 
         return $this->tags;
-    }
-
-    /**
-     * Save all the attachments in an array
-     * @return array
-     */
-    protected function saveAttachments(): array
-    {
-        foreach ($this->wpXML->channel->item as $item) {
-            // Save The Attachments in an array
-            $wpData = $item->children('wp', true);
-            if ($wpData->post_type == 'attachment') {
-                $this->attachments[(string)$wpData->post_parent] = (string)$wpData->attachment_url;
-            }
-        }
-
-        return $this->attachments;
     }
 
     /**
@@ -367,9 +394,9 @@ class WordpressImporter
                     $post->updated_at = Carbon::parse((string)$wpData->post_date);
                     $post->save();
 
-                    if (!$this->copyCategories && !empty($this->defaultCategory)) {
-                        $post->categories()->attach($this->defaultCategory->id);
-                    } else if (!empty($this->categories[$category]['id'])) {
+                    if (!$this->copyCategories && !empty($this->defaultCategoryId)) {
+                        $post->categories()->attach($this->defaultCategoryId);
+                    } elseif (!empty($this->categories[$category]['id'])) {
                         $post->categories()->attach($this->categories[$category]['id']);
                     }
 
@@ -540,110 +567,5 @@ class WordpressImporter
         }
 
         return $image;
-    }
-
-    /**
-     * @param string $reference
-     * @return bool
-     */
-    protected function syncLanguage(string $reference): bool
-    {
-        if (defined('LANGUAGE_MODULE_SCREEN_NAME')) {
-            if (!Language::getDefaultLanguage()) {
-                return false;
-            }
-
-            $ids = DB::table('language_meta')
-                ->where('reference_type', $reference)
-                ->pluck('reference_id')
-                ->all();
-
-            $referenceIds = DB::table((new $reference)->getTable())
-                ->whereNotIn('id', $ids)
-                ->pluck('id')
-                ->all();
-
-            $data = [];
-            foreach ($referenceIds as $referenceId) {
-                $data[] = [
-                    'reference_id'     => $referenceId,
-                    'reference_type'   => $reference,
-                    'lang_meta_code'   => Language::getDefaultLocaleCode(),
-                    'lang_meta_origin' => md5($referenceId . $reference . time()),
-                ];
-            }
-
-            DB::table('language_meta')->insert($data);
-        }
-
-        return true;
-    }
-
-    /**
-     * @return bool
-     */
-    public function hasError(): bool
-    {
-        return !empty($this->error);
-    }
-
-    /**
-     * @return string
-     */
-    public function getError()
-    {
-        return $this->error;
-    }
-
-    /**
-     * @param string $message
-     */
-    protected function setError(string $message = ''): void
-    {
-        $this->error = $message;
-    }
-
-    /**
-     * @param WordpressImporterRequest $request
-     */
-    protected function verifyRequest(WordpressImporterRequest $request): void
-    {
-
-        if (!$request->hasFile('wpexport')) {
-            $this->setError(__('Please specify a Wordpress XML file that you would like to upload.'));
-            return;
-        }
-
-        $mimeType = $request->file('wpexport')->getMimeType();
-
-        if (!in_array($mimeType, ['text/xml', 'application/xml'])) {
-            $this->setError(__('Invalid file type. Please make sure you are uploading a Wordpress XML export file.'));
-            return;
-        }
-
-        $xmlFile = $request->file('wpexport')->getRealPath();
-        $timeout = $request->input('timeout', 900);
-
-        set_time_limit($timeout);
-        ini_set('max_execution_time', $timeout);
-        ini_set('default_socket_timeout', $timeout);
-
-        $this->copyImages = (bool)$request->input('copyimages');
-        $this->wpXML = simplexml_load_file($xmlFile, 'SimpleXMLElement', LIBXML_NOCDATA);
-        $this->copyCategories = (bool)$request->input('copy_categories');
-        if ($request->has('category_default')) {
-            $this->defaultCategory = @json_decode(urldecode($request->input('category_default')));
-
-            if ($this->defaultCategory && $this->defaultCategory->slug === 'create-new') {
-                $this->defaultCategory = (object)$this->createCategory(
-                    $this->slugService->create($this->defaultCategory->name, 0, Category::class),
-                    [
-                        'name'          => $this->defaultCategory->name,
-                        'description'   => $this->defaultCategory->name .' description'
-                    ]
-                );
-            }
-        }
-
     }
 }

@@ -5,6 +5,7 @@ namespace Botble\WordpressImporter\Http\Controllers;
 use Assets;
 use Botble\Base\Http\Controllers\BaseController;
 use Botble\Base\Http\Responses\BaseHttpResponse;
+use Botble\WordpressImporter\Http\Requests\WordpressImporterRequest;
 use Botble\WordpressImporter\WordpressImporter;
 
 class WordpressImporterController extends BaseController
@@ -23,18 +24,23 @@ class WordpressImporterController extends BaseController
     }
 
     /**
+     * @param WordpressImporterRequest $request
      * @param BaseHttpResponse $response
      * @param WordpressImporter $wordpressImporter
      * @return BaseHttpResponse
      */
     public function import(
+        WordpressImporterRequest $request,
         BaseHttpResponse $response,
         WordpressImporter $wordpressImporter
-    ) {
-        if ($wordpressImporter->hasError()) {
+    )
+    {
+        $validate = $wordpressImporter->verifyRequest($request);
+
+        if ($validate['error']) {
             return $response
                 ->setError()
-                ->setMessage($wordpressImporter->getError());
+                ->setMessage($validate['message']);
         }
 
         $result = $wordpressImporter->import();
