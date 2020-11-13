@@ -18,7 +18,7 @@ class WordpressImporterController extends BaseController
         Assets::addScriptsDirectly('vendor/core/plugins/wordpress-importer/js/wordpress-importer.js')
             ->addStylesDirectly('vendor/core/plugins/wordpress-importer/css/wordpress-importer.css');
 
-        page_title()->setTitle(__('Wordpress Importer'));
+        page_title()->setTitle(trans('plugins/wordpress-importer::wordpress-importer.name'));
 
         return view('plugins/wordpress-importer::import');
     }
@@ -46,7 +46,6 @@ class WordpressImporterController extends BaseController
         $result = $wordpressImporter->import();
 
         return $response
-            ->setMessage(__('Imported :posts posts, :pages pages, :categories categories, :tags tags, and :users users successfully !',
-                $result));
+            ->setMessage(trans('plugins/wordpress-importer::wordpress-importer.import_success', $result));
     }
 }

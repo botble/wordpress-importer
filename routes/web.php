@@ -1,15 +1,18 @@
 <?php
 
-Route::group(['namespace' => 'Botble\WordpressImporter\Http\Controllers', 'middleware' => 'web'], function () {
-    Route::group(['prefix' => config('core.base.general.admin_dir'), 'middleware' => 'auth'], function () {
-        Route::get('wordpress-importer', [
-            'as'   => 'wordpress-importer',
-            'uses' => 'WordpressImporterController@index',
-        ]);
+Route::group(['namespace' => 'Botble\WordpressImporter\Http\Controllers', 'middleware' => ['web', 'core']],
+    function () {
+        Route::group(['prefix' => BaseHelper::getAdminPrefix(), 'middleware' => 'auth'], function () {
+            Route::get('wordpress-importer', [
+                'as'         => 'wordpress-importer',
+                'uses'       => 'WordpressImporterController@index',
+                'permission' => 'settings.options',
+            ]);
 
-        Route::post('wordpress-importer', [
-            'as'   => 'wordpress-importer',
-            'uses' => 'WordpressImporterController@import',
-        ]);
+            Route::post('wordpress-importer', [
+                'as'         => 'wordpress-importer.post',
+                'uses'       => 'WordpressImporterController@import',
+                'permission' => 'settings.options',
+            ]);
+        });
     });
-});

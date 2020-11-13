@@ -20,6 +20,7 @@ class WordpressImporterServiceProvider extends ServiceProvider
     {
         $this->setNamespace('plugins/wordpress-importer')
             ->loadAndPublishViews()
+            ->loadAndPublishTranslations()
             ->publishAssets()
             ->loadRoutes(['web']);
 
@@ -29,7 +30,7 @@ class WordpressImporterServiceProvider extends ServiceProvider
                     'id'          => 'cms-plugin-wordpress-importer',
                     'priority'    => 99,
                     'parent_id'   => 'cms-core-settings',
-                    'name'        => 'Wordpress Import',
+                    'name'        => 'plugins/wordpress-importer::wordpress-importer.name',
                     'icon'        => null,
                     'url'         => route('wordpress-importer'),
                     'permissions' => ['settings.options'],

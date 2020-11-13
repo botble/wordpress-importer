@@ -12,7 +12,6 @@ use Botble\Blog\Models\Tag;
 use Botble\Blog\Repositories\Interfaces\CategoryInterface;
 use Botble\Blog\Repositories\Interfaces\TagInterface;
 use Botble\Page\Models\Page;
-use Botble\Slug\Repositories\Interfaces\SlugInterface;
 use Carbon\Carbon;
 use DB;
 use Exception;
@@ -23,6 +22,7 @@ use Illuminate\Http\UploadedFile;
 use Language;
 use Mimey\MimeTypes;
 use RvMedia;
+use SlugHelper;
 
 class WordpressImporter
 {
@@ -90,7 +90,7 @@ class WordpressImporter
         if (!$request->hasFile('wpexport')) {
             return [
                 'error'   => true,
-                'message' => __('Please specify a Wordpress XML file that you would like to upload.'),
+                'message' => trans('plugins/wordpress-importer::wordpress-importer.xml_file_required'),
             ];
         }
 
@@ -99,7 +99,7 @@ class WordpressImporter
         if (!in_array($mimeType, ['text/xml', 'application/xml'])) {
             return [
                 'error'   => true,
-                'message' => __('Invalid file type. Please make sure you are uploading a Wordpress XML export file.'),
+                'message' => trans('plugins/wordpress-importer::wordpress-importer.invalid_xml_file'),
             ];
         }
 
@@ -239,10 +239,7 @@ class WordpressImporter
         // Save any parent categories to their children
         foreach ($this->categories as $category) {
             if (!empty($category['parent'])) {
-                $slug = app(SlugInterface::class)->getFirstBy([
-                    'key'            => $category['parent'],
-                    'reference_type' => Category::class,
-                ]);
+                $slug = SlugHelper::getSlug($category['parent'], SlugHelper::getPrefix(Category::class), Category::class);
                 if ($slug) {
                     $category['parent_id'] = $slug->reference_id;
                     $thisCategory = app(CategoryInterface::class)->findById($category['id']);
