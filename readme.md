@@ -8,8 +8,8 @@ Purchase it here: [https://codecanyon.net/item/botble-cms-php-platform-based-on-
 # Installation
 - Download and rename folder `wordpress-importer-master` to `wordpress-importer`.
 - Copy folder `wordpress-importer` into `/platform/plugins`.
-- Go to Admin -> Plugins then activate plugin Wordpress Importer.
-- Go to Admin -> Settings -> Wordpress Importer.
+- Go to Admin -> Plugins then activate plugin WordPress Importer.
+- Go to Admin -> Tools -> WordPress Importer.
 
 # Screenshots
 

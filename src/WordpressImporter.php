@@ -5,20 +5,21 @@ namespace Botble\WordpressImporter;
 use Botble\ACL\Models\User;
 use Botble\ACL\Repositories\Interfaces\UserInterface;
 use Botble\Base\Enums\BaseStatusEnum;
-use Botble\Base\Events\CreatedContentEvent;
 use Botble\Blog\Models\Category;
 use Botble\Blog\Models\Post;
 use Botble\Blog\Models\Tag;
 use Botble\Blog\Repositories\Interfaces\CategoryInterface;
 use Botble\Blog\Repositories\Interfaces\TagInterface;
+use Botble\Language\Models\LanguageMeta;
 use Botble\Page\Models\Page;
+use Botble\Slug\Models\Slug;
 use Carbon\Carbon;
-use DB;
 use Exception;
 use File;
 use Hash;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Str;
 use Language;
 use Mimey\MimeTypes;
 use RvMedia;
@@ -82,6 +83,11 @@ class WordpressImporter
     protected $userDefaultPassword = 'password';
 
     /**
+     * @var bool
+     */
+    protected $isUsingMultiLanguageV1 = false;
+
+    /**
      * @param Request $request
      * @return array|false[]
      */
@@ -106,9 +112,9 @@ class WordpressImporter
         $xmlFile = $request->file('wpexport')->getRealPath();
         $timeout = $request->input('timeout', 900);
 
-        set_time_limit($timeout);
-        ini_set('max_execution_time', $timeout);
-        ini_set('default_socket_timeout', $timeout);
+        @set_time_limit($timeout);
+        @ini_set('max_execution_time', $timeout);
+        @ini_set('default_socket_timeout', $timeout);
 
         $this->copyImages = (bool)$request->input('copyimages');
         $this->wpXML = simplexml_load_file($xmlFile, 'SimpleXMLElement', LIBXML_NOCDATA);
@@ -127,20 +133,20 @@ class WordpressImporter
      */
     public function import()
     {
+        if (defined('LANGUAGE_MODULE_SCREEN_NAME') && !config('plugins.blog.general.use_language_v2', false)) {
+            $this->isUsingMultiLanguageV1 = true;
+        }
+
         $this->saveAttachments();
         $this->saveAuthors();
 
         if ($this->copyCategories) {
             $this->saveCategories();
-            $this->syncLanguage(Category::class);
         }
 
         $this->saveTags();
-        $this->savePostsAndPages('post');
-        $this->syncLanguage(Tag::class);
-        $this->syncLanguage(Post::class);
+        $this->savePostsAndPages();
         $this->savePostsAndPages('page');
-        $this->syncLanguage(Page::class);
 
         return [
             'categories' => count($this->categories),
@@ -218,17 +224,22 @@ class WordpressImporter
                 'order'       => $order,
                 'name'        => (string)$category->cat_name,
                 'description' => (string)$category->category_description,
-                'author_id'   => auth()->user()->getAuthIdentifier(),
+                'author_id'   => auth()->id(),
                 'author_type' => User::class,
             ];
 
             $newCategory = app(CategoryInterface::class)->createOrUpdate($this->categories[(string)$category->category_nicename]);
 
-            request()->merge([
-                'slug' => (string)$category->category_nicename,
+            Slug::create([
+                'reference_type' => Category::class,
+                'reference_id'   => $newCategory->id,
+                'key'            => Str::slug((string)$category->category_nicename),
+                'prefix'         => SlugHelper::getPrefix(Category::class),
             ]);
 
-            event(new CreatedContentEvent(CATEGORY_MODULE_SCREEN_NAME, request(), $newCategory));
+            if ($this->isUsingMultiLanguageV1) {
+                LanguageMeta::saveMetaData($newCategory, Language::getDefaultLocaleCode());
+            }
 
             $this->categories[(string)$category->category_nicename]['parent'] = (string)$category->category_parent;
             $this->categories[(string)$category->category_nicename]['id'] = $newCategory->id;
@@ -255,43 +266,6 @@ class WordpressImporter
     }
 
     /**
-     * @param string $reference
-     * @return bool
-     */
-    protected function syncLanguage(string $reference): bool
-    {
-        if (defined('LANGUAGE_MODULE_SCREEN_NAME')) {
-            if (!Language::getDefaultLanguage()) {
-                return false;
-            }
-
-            $ids = DB::table('language_meta')
-                ->where('reference_type', $reference)
-                ->pluck('reference_id')
-                ->all();
-
-            $referenceIds = DB::table((new $reference)->getTable())
-                ->whereNotIn('id', $ids)
-                ->pluck('id')
-                ->all();
-
-            $data = [];
-            foreach ($referenceIds as $referenceId) {
-                $data[] = [
-                    'reference_id'     => $referenceId,
-                    'reference_type'   => $reference,
-                    'lang_meta_code'   => Language::getDefaultLocaleCode(),
-                    'lang_meta_origin' => md5($referenceId . $reference . time()),
-                ];
-            }
-
-            DB::table('language_meta')->insert($data);
-        }
-
-        return true;
-    }
-
-    /**
      * @return array
      */
     protected function saveTags(): array
@@ -305,17 +279,22 @@ class WordpressImporter
             $this->tags[(string)$tag->tag_slug] = [
                 'order'       => $order,
                 'name'        => (string)$tag->tag_name,
-                'author_id'   => auth()->user()->getAuthIdentifier(),
+                'author_id'   => auth()->id(),
                 'author_type' => User::class,
             ];
 
             $newTag = app(TagInterface::class)->createOrUpdate($this->tags[(string)$tag->tag_slug]);
 
-            request()->merge([
-                'slug' => (string)$tag->tag_slug,
+            Slug::create([
+                'reference_type' => Tag::class,
+                'reference_id'   => $newTag->id,
+                'key'            => Str::slug((string)$tag->tag_slug),
+                'prefix'         => SlugHelper::getPrefix(Tag::class),
             ]);
 
-            event(new CreatedContentEvent(TAG_MODULE_SCREEN_NAME, request(), $newTag));
+            if ($this->isUsingMultiLanguageV1) {
+                LanguageMeta::saveMetaData($newTag, Language::getDefaultLocaleCode());
+            }
 
             $this->tags[(string)$tag->tag_slug]['id'] = $newTag->id;
 
@@ -361,20 +340,18 @@ class WordpressImporter
             $slug = (string)$wpData->post_name;
             if (empty($slug)) {
                 if ($type == 'post') {
-                    $slug = 'post-' . (string)$wpData->post_id;
+                    $slug = 'post-' . $wpData->post_id;
                 } elseif ($type == 'page') {
-                    $slug = 'page-' . (string)$wpData->post_id;
+                    $slug = 'page-' . $wpData->post_id;
                 }
             }
 
             if ($wpData->post_type == $type) {
 
-                request()->merge(compact('slug'));
-
                 if ($type == 'post') {
 
                     $data = [
-                        'author_id'   => !empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->user()->getAuthIdentifier(),
+                        'author_id'   => !empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->id(),
                         'author_type' => User::class,
                         'name'        => trim((string)$item->title, '"'),
                         'description' => trim((string)$excerpt->encoded, '" \n'),
@@ -397,12 +374,21 @@ class WordpressImporter
                         $post->categories()->attach($this->categories[$category]['id']);
                     }
 
-                    event(new CreatedContentEvent(POST_MODULE_SCREEN_NAME, request(), $post));
+                    Slug::create([
+                        'reference_type' => Post::class,
+                        'reference_id'   => $post->id,
+                        'key'            => Str::slug($slug),
+                        'prefix'         => SlugHelper::getPrefix(Post::class),
+                    ]);
+
+                    if ($this->isUsingMultiLanguageV1) {
+                        LanguageMeta::saveMetaData($post, Language::getDefaultLocaleCode());
+                    }
 
                 } elseif ($type == 'page') {
 
                     $data = [
-                        'user_id'     => !empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->user()->getAuthIdentifier(),
+                        'user_id'     => !empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->id(),
                         'name'        => trim((string)$item->title, '"'),
                         'description' => trim((string)$excerpt->encoded, '" \n'),
                         'content'     => $this->autop(trim((string)$content->encoded, '" \n')),
@@ -419,7 +405,16 @@ class WordpressImporter
                     $page->updated_at = Carbon::parse((string)$item->pubDate);
                     $page->save();
 
-                    event(new CreatedContentEvent(PAGE_MODULE_SCREEN_NAME, request(), $page));
+                    Slug::create([
+                        'reference_type' => Page::class,
+                        'reference_id'   => $page->id,
+                        'key'            => Str::slug($slug),
+                        'prefix'         => SlugHelper::getPrefix(Page::class),
+                    ]);
+
+                    if ($this->isUsingMultiLanguageV1) {
+                        LanguageMeta::saveMetaData($page, Language::getDefaultLocaleCode());
+                    }
                 }
             }
         }
