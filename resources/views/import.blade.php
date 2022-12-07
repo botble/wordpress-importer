@@ -34,6 +34,11 @@
                                 </div>
                             </div>
 
+                            <div class="form-group">
+                                <label for="load_seo_meta_from_yoast_seo" class="control-label">{{ trans('plugins/wordpress-importer::wordpress-importer.load_seo_meta') }}</label>
+                                {{ Form::onOff('load_seo_meta_from_yoast_seo', true)  }}
+                                <small class="text-muted d-block">{{ trans('plugins/wordpress-importer::wordpress-importer.load_seo_meta_description') }}</small>
+                            </div>
                         </div>
 
                         <div class="col-md-6">
