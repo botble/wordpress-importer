@@ -18,4 +18,6 @@ return [
     'xml_file_required'           => 'Please specify a Wordpress XML file that you would like to upload.',
     'invalid_xml_file'            => 'Invalid file type. Please make sure you are uploading a Wordpress XML export file.',
     'import_success'              => 'Imported :posts posts, :pages pages, :categories categories, :tags tags, and :users users successfully!',
+    'load_seo_meta'               => 'Load SEO Meta',
+    'load_seo_meta_description'   => 'Load SEO Meta(for Post and Page) from WordPress Yoast SEO plugin.',
 ];

@@ -17,10 +17,13 @@ use Carbon\Carbon;
 use Exception;
 use File;
 use Hash;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use Language;
+use MetaBox;
 use Mimey\MimeTypes;
 use RvMedia;
 use SlugHelper;
@@ -88,6 +91,11 @@ class WordpressImporter
     protected $isUsingMultiLanguageV1 = false;
 
     /**
+     * @var bool
+     */
+    protected $loadSEOMetaFromYoastSEO = true;
+
+    /**
      * @param Request $request
      * @return array|false[]
      */
@@ -122,6 +130,7 @@ class WordpressImporter
         if ($request->has('default_category_id')) {
             $this->defaultCategoryId = $request->input('default_category_id');
         }
+        $this->loadSEOMetaFromYoastSEO = (bool)$request->input('load_seo_meta_from_yoast_seo');
 
         return [
             'error' => false,
@@ -317,6 +326,11 @@ class WordpressImporter
                 continue;
             }
 
+            $postmeta = [];
+            foreach ($wpData->postmeta as $value) {
+                $postmeta[] = (array) $value;
+            }
+
             $content = $item->children('content', true);
             $excerpt = $item->children('excerpt', true);
             $image = isset($this->attachments[(string)$wpData->post_id]) ? $this->attachments[(string)$wpData->post_id] : '';
@@ -366,6 +380,7 @@ class WordpressImporter
                     $post->fill($data);
                     $post->created_at = Carbon::parse((string)$wpData->post_date);
                     $post->updated_at = Carbon::parse((string)$wpData->post_date);
+                    $post->views = $this->getMetaValue($postmeta, 'post_views_count', 0);
                     $post->save();
 
                     if (!$this->copyCategories && !empty($this->defaultCategoryId)) {
@@ -384,6 +399,8 @@ class WordpressImporter
                     if ($this->isUsingMultiLanguageV1) {
                         LanguageMeta::saveMetaData($post, Language::getDefaultLocaleCode());
                     }
+
+                    $this->saveMetaBoxData($post, $postmeta);
 
                 } elseif ($type == 'page') {
 
@@ -415,6 +432,8 @@ class WordpressImporter
                     if ($this->isUsingMultiLanguageV1) {
                         LanguageMeta::saveMetaData($page, Language::getDefaultLocaleCode());
                     }
+
+                    $this->saveMetaBoxData($page, $postmeta);
                 }
             }
         }
@@ -423,6 +442,32 @@ class WordpressImporter
             'posts' => $this->posts,
             'pages' => $this->pages,
         ];
+    }
+
+    protected function saveMetaBoxData(Model $model, array $postmeta)
+    {
+        if ($this->loadSEOMetaFromYoastSEO) {
+            $seoMeta = [];
+
+            if ($seoTitle = $this->getMetaValue($postmeta, '_yoast_wpseo_title')) {
+                $seoMeta['seo_title'] = $seoTitle;
+            }
+
+            if ($seoDesc = $this->getMetaValue($postmeta, '_yoast_wpseo_metadesc')) {
+                $seoMeta['seo_description'] = $seoDesc;
+            }
+
+            if ($seoMeta) {
+                MetaBox::saveMetaBoxData($model, 'seo_meta', $seoMeta);
+            }
+        }
+    }
+
+    protected function getMetaValue(array $postmeta, string $key, $default = '')
+    {
+        return Arr::get(Arr::first($postmeta, function ($value) use ($key) {
+            return Arr::get($value, 'meta_key') == $key;
+        }, []), 'meta_value', $default);
     }
 
     /**
