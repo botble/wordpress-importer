@@ -1,9 +1,10 @@
 {
+    "id": "botble/wordpress-importer",
     "name": "WordPress Importer",
     "namespace": "Botble\\WordpressImporter\\",
     "provider": "Botble\\WordpressImporter\\Providers\\WordpressImporterServiceProvider",
     "author": "Botble Technologies",
     "url": "https://botble.com",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "description": "Import your WordPress posts, pages, categories, tags, and users from the WP XML export file."
 }
