@@ -1,12 +1,11 @@
-@extends('core/base::layouts.master')
-
+@extends(BaseHelper::getAdminMasterLayoutTemplate())
 @section('content')
     <div class="card">
         <div class="card-body">
             <div class="wordpress-importer">
                 <h1 class="page-title">{{ trans('plugins/wordpress-importer::wordpress-importer.name') }}</h1>
 
-                <form method="POST" action="{{ route('wordpress-importer') }}" enctype="multipart/form-data">
+                <form method="POST" action="{{ route('wordpress-importer') }}" enctype="multipart/form-data" class="import-wordpress-form">
                     @csrf
                     <div class="row">
                         <div class="col-md-6">
@@ -27,9 +26,8 @@
                                         <h4>{{ trans('plugins/wordpress-importer::wordpress-importer.select_default_category') }}</h4>
                                     </div>
                                     <div class="widget-body">
-                                        <ul>
-                                            <li>{{ trans('plugins/wordpress-importer::wordpress-importer.loading') }}</li>
-                                        </ul>
+                                        <ul></ul>
+                                        <a class="btn btn-primary btn-small btn-loadmore" href="#">{{ trans('plugins/wordpress-importer::wordpress-importer.load_more') }}</a>
                                     </div>
                                 </div>
                             </div>
@@ -44,17 +42,17 @@
                         <div class="col-md-6">
                             <h6>{{ trans('plugins/wordpress-importer::wordpress-importer.upload_xml') }}</h6>
                             <div class="form-group">
-                                <label for="timeout" class="control-label" data-toggle="tooltip"
+                                <label for="timeout" class="control-label" data-toggle="tooltip" data-bs-toggle="tooltip"
                                        title="{{ trans('plugins/wordpress-importer::wordpress-importer.timeout_description') }}"
                                        data-placement="right">{{ trans('plugins/wordpress-importer::wordpress-importer.max_timeout') }}</label>
-                                <input type="text" name="timeout" class="form-control" value="900" id="timeout">
+                                <input type="number" name="timeout" class="form-control" value="900" id="timeout">
                             </div>
 
                             <div class="form-group">
-                                <label for="wpexport" class="control-label required" data-toggle="tooltip"
+                                <label for="wpexport" class="control-label required" data-toggle="tooltip" data-bs-toggle="tooltip"
                                        title="{{ trans('plugins/wordpress-importer::wordpress-importer.wp_xml_file_description') }}"
                                        data-placement="right">{{ trans('plugins/wordpress-importer::wordpress-importer.wp_xml_file') }}</label><br>
-                                <input type="file" name="wpexport" id="wpexport">
+                                <input type="file" required class="form-control" name="wpexport" id="wpexport" accept="text/xml,application/xml">
                             </div>
                             <div class="form-group">
                                 <div class="alert alert-success success-message hidden"></div>
@@ -62,7 +60,10 @@
                                 <div class="alert alert-warning error-message hidden"></div>
                             </div>
                             <div class="form-group">
-                                <button type="submit" class="btn btn-primary import-wordpress-data">{{ trans('plugins/wordpress-importer::wordpress-importer.import') }}</button>
+                                <button type="submit" class="btn btn-primary import-wordpress-data">
+                                    <i class="fas fa-cloud-upload-alt"></i>
+                                    <span>{{ trans('plugins/wordpress-importer::wordpress-importer.import') }}</span>
+                                </button>
                             </div>
                         </div>
                     </div>

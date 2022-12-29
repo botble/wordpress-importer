@@ -33,8 +33,7 @@ class WordpressImporterController extends BaseController
         WordpressImporterRequest $request,
         BaseHttpResponse $response,
         WordpressImporter $wordpressImporter
-    )
-    {
+    ) {
         $validate = $wordpressImporter->verifyRequest($request);
 
         if ($validate['error']) {
