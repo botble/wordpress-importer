@@ -101,18 +101,18 @@ class WordpressImporter
      */
     public function verifyRequest(Request $request): array
     {
-        if (!$request->hasFile('wpexport')) {
+        if (! $request->hasFile('wpexport')) {
             return [
-                'error'   => true,
+                'error' => true,
                 'message' => trans('plugins/wordpress-importer::wordpress-importer.xml_file_required'),
             ];
         }
 
         $mimeType = $request->file('wpexport')->getMimeType();
 
-        if (!in_array($mimeType, ['text/xml', 'application/xml'])) {
+        if (! in_array($mimeType, ['text/xml', 'application/xml'])) {
             return [
-                'error'   => true,
+                'error' => true,
                 'message' => trans('plugins/wordpress-importer::wordpress-importer.invalid_xml_file'),
             ];
         }
@@ -142,7 +142,7 @@ class WordpressImporter
      */
     public function import()
     {
-        if (defined('LANGUAGE_MODULE_SCREEN_NAME') && !config('plugins.blog.general.use_language_v2', false)) {
+        if (defined('LANGUAGE_MODULE_SCREEN_NAME') && ! config('plugins.blog.general.use_language_v2', false)) {
             $this->isUsingMultiLanguageV1 = true;
         }
 
@@ -159,10 +159,10 @@ class WordpressImporter
 
         return [
             'categories' => count($this->categories),
-            'tags'       => count($this->tags),
-            'posts'      => count($this->posts),
-            'pages'      => count($this->pages),
-            'users'      => count($this->users),
+            'tags' => count($this->tags),
+            'posts' => count($this->posts),
+            'pages' => count($this->pages),
+            'users' => count($this->users),
         ];
     }
 
@@ -195,10 +195,10 @@ class WordpressImporter
             $username = (string)$author->author_login;
             $this->users[$username] = [
                 'first_name' => (string)$author->author_first_name,
-                'last_name'  => (string)$author->author_last_name,
-                'email'      => (string)$author->author_email,
-                'password'   => Hash::make($this->userDefaultPassword),
-                'username'   => $username,
+                'last_name' => (string)$author->author_last_name,
+                'email' => (string)$author->author_email,
+                'password' => Hash::make($this->userDefaultPassword),
+                'username' => $username,
             ];
 
             $newUser = app(UserInterface::class)
@@ -207,7 +207,7 @@ class WordpressImporter
                 ->orWhere('username', $username)
                 ->first();
 
-            if (!$newUser) {
+            if (! $newUser) {
                 $newUser = app(UserInterface::class)->createOrUpdate($this->users[$username]);
             }
 
@@ -228,12 +228,11 @@ class WordpressImporter
 
         $order = 1;
         foreach ($wpData->category as $category) {
-
             $this->categories[(string)$category->category_nicename] = [
-                'order'       => $order,
-                'name'        => (string)$category->cat_name,
+                'order' => $order,
+                'name' => (string)$category->cat_name,
                 'description' => (string)$category->category_description,
-                'author_id'   => auth()->id(),
+                'author_id' => auth()->id(),
                 'author_type' => User::class,
             ];
 
@@ -241,9 +240,9 @@ class WordpressImporter
 
             Slug::create([
                 'reference_type' => Category::class,
-                'reference_id'   => $newCategory->id,
-                'key'            => Str::slug((string)$category->category_nicename),
-                'prefix'         => SlugHelper::getPrefix(Category::class),
+                'reference_id' => $newCategory->id,
+                'key' => Str::slug((string)$category->category_nicename),
+                'prefix' => SlugHelper::getPrefix(Category::class),
             ]);
 
             if ($this->isUsingMultiLanguageV1) {
@@ -258,7 +257,7 @@ class WordpressImporter
 
         // Save any parent categories to their children
         foreach ($this->categories as $category) {
-            if (!empty($category['parent'])) {
+            if (! empty($category['parent'])) {
                 $slug = SlugHelper::getSlug($category['parent'], SlugHelper::getPrefix(Category::class), Category::class);
                 if ($slug) {
                     $category['parent_id'] = $slug->reference_id;
@@ -284,11 +283,10 @@ class WordpressImporter
         $order = 1;
 
         foreach ($wpData->tag as $tag) {
-
             $this->tags[(string)$tag->tag_slug] = [
-                'order'       => $order,
-                'name'        => (string)$tag->tag_name,
-                'author_id'   => auth()->id(),
+                'order' => $order,
+                'name' => (string)$tag->tag_name,
+                'author_id' => auth()->id(),
                 'author_type' => User::class,
             ];
 
@@ -296,9 +294,9 @@ class WordpressImporter
 
             Slug::create([
                 'reference_type' => Tag::class,
-                'reference_id'   => $newTag->id,
-                'key'            => Str::slug((string)$tag->tag_slug),
-                'prefix'         => SlugHelper::getPrefix(Tag::class),
+                'reference_id' => $newTag->id,
+                'key' => Str::slug((string)$tag->tag_slug),
+                'prefix' => SlugHelper::getPrefix(Tag::class),
             ]);
 
             if ($this->isUsingMultiLanguageV1) {
@@ -322,7 +320,7 @@ class WordpressImporter
         foreach ($this->wpXML->channel->item as $item) {
             $wpData = $item->children('wp', true);
 
-            if (!in_array($wpData->post_type, ['post', 'page'])) {
+            if (! in_array($wpData->post_type, ['post', 'page'])) {
                 continue;
             }
 
@@ -361,39 +359,39 @@ class WordpressImporter
             }
 
             if ($wpData->post_type == $type) {
-
                 if ($type == 'post') {
-
                     $data = [
-                        'author_id'   => !empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->id(),
+                        'author_id' => ! empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->id(),
                         'author_type' => User::class,
-                        'name'        => trim((string)$item->title, '"'),
-                        'description' => trim((string)$excerpt->encoded, '" \n'),
-                        'content'     => $this->autop(trim((string)$content->encoded, '" \n')),
-                        'image'       => $this->getImage($image),
-                        'status'      => $status,
+                        'name' => trim((string)$item->title, '"'),
+                        'description' => Str::limit(trim((string)$excerpt->encoded, '" \n'), 400, ''),
+                        'content' => $this->autop(trim((string)$content->encoded, '" \n')),
+                        'image' => $this->getImage($image),
+                        'status' => $status,
                     ];
 
                     $this->posts[] = $data;
 
-                    $post = new Post;
+                    $post = new Post();
                     $post->fill($data);
-                    $post->created_at = Carbon::parse((string)$wpData->post_date);
-                    $post->updated_at = Carbon::parse((string)$wpData->post_date);
+                    if ($wpData->post_date) {
+                        $post->created_at = Carbon::parse((string)$wpData->post_date);
+                        $post->updated_at = Carbon::parse((string)$wpData->post_date);
+                    }
                     $post->views = $this->getMetaValue($postmeta, 'post_views_count', 0);
                     $post->save();
 
-                    if (!$this->copyCategories && !empty($this->defaultCategoryId)) {
+                    if (! $this->copyCategories && ! empty($this->defaultCategoryId)) {
                         $post->categories()->attach($this->defaultCategoryId);
-                    } elseif (!empty($this->categories[$category]['id'])) {
+                    } elseif (! empty($this->categories[$category]['id'])) {
                         $post->categories()->attach($this->categories[$category]['id']);
                     }
 
                     Slug::create([
                         'reference_type' => Post::class,
-                        'reference_id'   => $post->id,
-                        'key'            => Str::slug($slug),
-                        'prefix'         => SlugHelper::getPrefix(Post::class),
+                        'reference_id' => $post->id,
+                        'key' => Str::slug($slug),
+                        'prefix' => SlugHelper::getPrefix(Post::class),
                     ]);
 
                     if ($this->isUsingMultiLanguageV1) {
@@ -401,32 +399,32 @@ class WordpressImporter
                     }
 
                     $this->saveMetaBoxData($post, $postmeta);
-
                 } elseif ($type == 'page') {
-
                     $data = [
-                        'user_id'     => !empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->id(),
-                        'name'        => trim((string)$item->title, '"'),
-                        'description' => trim((string)$excerpt->encoded, '" \n'),
-                        'content'     => $this->autop(trim((string)$content->encoded, '" \n')),
-                        'image'       => $this->getImage($image),
-                        'status'      => $status,
-                        'template'    => 'default',
+                        'user_id' => ! empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->id(),
+                        'name' => trim((string)$item->title, '"'),
+                        'description' => Str::limit(trim((string)$excerpt->encoded, '" \n'), 400, ''),
+                        'content' => $this->autop(trim((string)$content->encoded, '" \n')),
+                        'image' => $this->getImage($image),
+                        'status' => $status,
+                        'template' => 'default',
                     ];
 
                     $this->pages[] = $data;
 
-                    $page = new Page;
+                    $page = new Page();
                     $page->fill($data);
-                    $page->created_at = Carbon::parse((string)$item->pubDate);
-                    $page->updated_at = Carbon::parse((string)$item->pubDate);
+                    if ($item->pubDate) {
+                        $page->created_at = Carbon::parse((string)$item->pubDate);
+                        $page->updated_at = Carbon::parse((string)$item->pubDate);
+                    }
                     $page->save();
 
                     Slug::create([
                         'reference_type' => Page::class,
-                        'reference_id'   => $page->id,
-                        'key'            => Str::slug($slug),
-                        'prefix'         => SlugHelper::getPrefix(Page::class),
+                        'reference_id' => $page->id,
+                        'key' => Str::slug($slug),
+                        'prefix' => SlugHelper::getPrefix(Page::class),
                     ]);
 
                     if ($this->isUsingMultiLanguageV1) {
@@ -506,6 +504,7 @@ class WordpressImporter
                 // Malformed html?
                 if ($start === false) {
                     $pee .= $peePart;
+
                     continue;
                 }
 
@@ -536,8 +535,11 @@ class WordpressImporter
         foreach ($pees as $tinkle) {
             $pee .= '<p>' . trim($tinkle, "\n") . "</p>\n";
         }
-        $pee = preg_replace('|<p>\s*</p>|', '',
-            $pee); // under certain strange conditions it could create a P of entirely whitespace
+        $pee = preg_replace(
+            '|<p>\s*</p>|',
+            '',
+            $pee
+        ); // under certain strange conditions it could create a P of entirely whitespace
         $pee = preg_replace('!<p>([^<]+)</(div|address|form)>!', '<p>$1</p></$2>', $pee);
         $pee = preg_replace('!<p>\s*(</?' . $allBlocks . '[^>]*>)\s*</p>!', '$1', $pee); // don't pee all over a tag
         $pee = preg_replace('|<p>(<li.+?)</p>|', '$1', $pee); // problem with nested lists
@@ -546,10 +548,13 @@ class WordpressImporter
         $pee = preg_replace('!<p>\s*(</?' . $allBlocks . '[^>]*>)!', '$1', $pee);
         $pee = preg_replace('!(</?' . $allBlocks . '[^>]*>)\s*</p>!', '$1', $pee);
         if ($br) {
-            $pee = preg_replace_callback('/<(script|style).*?<\/\\1>/s',
+            $pee = preg_replace_callback(
+                '/<(script|style).*?<\/\\1>/s',
                 function ($matches) {
                     return str_replace("\n", '<PreserveNewline />', $matches[0]);
-                }, $pee);
+                },
+                $pee
+            );
             $pee = preg_replace('|(?<!<br />)\s*\n|', "<br />\n", $pee); // optionally make line breaks
             $pee = str_replace('<PreserveNewline />', "\n", $pee);
         }
@@ -557,7 +562,7 @@ class WordpressImporter
         $pee = preg_replace('!<br />(\s*</?(?:p|li|div|dl|dd|dt|th|pre|td|ul|ol)[^>]*>)!', '$1', $pee);
         $pee = preg_replace("|\n</p>$|", '</p>', $pee);
 
-        if (!empty($preTags)) {
+        if (! empty($preTags)) {
             $pee = str_replace(array_keys($preTags), array_values($preTags), $pee);
         }
 
@@ -570,8 +575,9 @@ class WordpressImporter
      */
     protected function getImage($image)
     {
-        if (!empty($image) && $this->copyImages) {
+        if (! empty($image) && $this->copyImages) {
             $info = pathinfo($image);
+
             try {
                 $contents = file_get_contents($image);
             } catch (Exception $exception) {
@@ -583,14 +589,14 @@ class WordpressImporter
             }
 
             $path = '/tmp';
-            if (!File::isDirectory($path)) {
+            if (! File::isDirectory($path)) {
                 File::makeDirectory($path, 0755);
             }
 
             $path = $path . '/' . $info['basename'];
             file_put_contents($path, $contents);
 
-            $mimeType = (new MimeTypes)->getMimeType(File::extension($image));
+            $mimeType = (new MimeTypes())->getMimeType(File::extension($image));
 
             $fileUpload = new UploadedFile($path, $info['basename'], $mimeType, null, true);
 
