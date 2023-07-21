@@ -3,20 +3,17 @@
 namespace Botble\WordpressImporter;
 
 use Botble\ACL\Models\User;
-use Botble\ACL\Repositories\Interfaces\UserInterface;
 use Botble\Base\Enums\BaseStatusEnum;
 use Botble\Blog\Models\Category;
 use Botble\Blog\Models\Post;
 use Botble\Blog\Models\Tag;
-use Botble\Blog\Repositories\Interfaces\CategoryInterface;
-use Botble\Blog\Repositories\Interfaces\TagInterface;
 use Botble\Language\Models\LanguageMeta;
 use Botble\Page\Models\Page;
 use Botble\Slug\Models\Slug;
 use Carbon\Carbon;
 use Exception;
-use File;
-use Hash;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -26,79 +23,37 @@ use Language;
 use MetaBox;
 use Mimey\MimeTypes;
 use RvMedia;
+use SimpleXMLElement;
 use SlugHelper;
 
 class WordpressImporter
 {
-    /**
-     * @var \SimpleXMLElement
-     */
-    protected $wpXML;
+    protected SimpleXMLElement $wpXML;
 
-    /**
-     * @var array
-     */
-    protected $users = [];
+    protected array $users = [];
 
-    /**
-     * @var array
-     */
-    protected $attachments = [];
+    protected array $attachments = [];
 
-    /**
-     * @var array
-     */
-    protected $categories = [];
+    protected array $categories = [];
 
-    /**
-     * @var array
-     */
-    protected $tags = [];
+    protected array $tags = [];
 
-    /**
-     * @var array
-     */
-    protected $posts = [];
+    protected array $posts = [];
 
-    /**
-     * @var array
-     */
-    protected $pages = [];
+    protected array $pages = [];
 
-    /**
-     * @var bool
-     */
-    protected $copyImages = true;
+    protected bool $copyImages = true;
 
-    /**
-     * @var bool
-     */
-    protected $copyCategories = true;
+    protected bool $copyCategories = true;
 
-    /**
-     * @var int
-     */
-    protected $defaultCategoryId;
+    protected int|null $defaultCategoryId;
 
-    /**
-     * @var string
-     */
-    protected $userDefaultPassword = 'password';
+    protected string $userDefaultPassword = 'password';
 
-    /**
-     * @var bool
-     */
-    protected $isUsingMultiLanguageV1 = false;
+    protected bool $isUsingMultiLanguageV1 = false;
 
-    /**
-     * @var bool
-     */
-    protected $loadSEOMetaFromYoastSEO = true;
+    protected bool $loadSEOMetaFromYoastSEO = true;
 
-    /**
-     * @param Request $request
-     * @return array|false[]
-     */
     public function verifyRequest(Request $request): array
     {
         if (! $request->hasFile('wpexport')) {
@@ -137,10 +92,7 @@ class WordpressImporter
         ];
     }
 
-    /**
-     * @return array
-     */
-    public function import()
+    public function import(): array
     {
         if (defined('LANGUAGE_MODULE_SCREEN_NAME') && ! config('plugins.blog.general.use_language_v2', false)) {
             $this->isUsingMultiLanguageV1 = true;
@@ -166,10 +118,6 @@ class WordpressImporter
         ];
     }
 
-    /**
-     * Save all the attachments in an array
-     * @return array
-     */
     protected function saveAttachments(): array
     {
         foreach ($this->wpXML->channel->item as $item) {
@@ -183,10 +131,6 @@ class WordpressImporter
         return $this->attachments;
     }
 
-    /**
-     * Create new users and load them into array
-     * @return array
-     */
     protected function saveAuthors(): array
     {
         $wpData = $this->wpXML->channel->children('wp', true);
@@ -201,14 +145,13 @@ class WordpressImporter
                 'username' => $username,
             ];
 
-            $newUser = app(UserInterface::class)
-                ->getModel()
+            $newUser = User::query()
                 ->where('email', (string)$author->author_email)
                 ->orWhere('username', $username)
                 ->first();
 
             if (! $newUser) {
-                $newUser = app(UserInterface::class)->createOrUpdate($this->users[$username]);
+                $newUser = User::query()->create($this->users[$username]);
             }
 
             // store the new id in the array
@@ -218,10 +161,6 @@ class WordpressImporter
         return $this->users;
     }
 
-    /**
-     * Create new categories and store them in the array
-     * @return array
-     */
     protected function saveCategories(): array
     {
         $wpData = $this->wpXML->channel->children('wp', true);
@@ -236,9 +175,9 @@ class WordpressImporter
                 'author_type' => User::class,
             ];
 
-            $newCategory = app(CategoryInterface::class)->createOrUpdate($this->categories[(string)$category->category_nicename]);
+            $newCategory = Category::query()->create($this->categories[(string)$category->category_nicename]);
 
-            Slug::create([
+            Slug::query()->create([
                 'reference_type' => Category::class,
                 'reference_id' => $newCategory->id,
                 'key' => Str::slug((string)$category->category_nicename),
@@ -261,7 +200,7 @@ class WordpressImporter
                 $slug = SlugHelper::getSlug($category['parent'], SlugHelper::getPrefix(Category::class), Category::class);
                 if ($slug) {
                     $category['parent_id'] = $slug->reference_id;
-                    $thisCategory = app(CategoryInterface::class)->findById($category['id']);
+                    $thisCategory = Category::query()->find($category['id']);
                     if (isset($thisCategory->id)) {
                         $thisCategory->parent_id = $slug->reference_id;
                         $thisCategory->save();
@@ -273,9 +212,6 @@ class WordpressImporter
         return $this->categories;
     }
 
-    /**
-     * @return array
-     */
     protected function saveTags(): array
     {
         $wpData = $this->wpXML->channel->children('wp', true);
@@ -290,9 +226,9 @@ class WordpressImporter
                 'author_type' => User::class,
             ];
 
-            $newTag = app(TagInterface::class)->createOrUpdate($this->tags[(string)$tag->tag_slug]);
+            $newTag = Tag::query()->create($this->tags[(string)$tag->tag_slug]);
 
-            Slug::create([
+            Slug::query()->create([
                 'reference_type' => Tag::class,
                 'reference_id' => $newTag->id,
                 'key' => Str::slug((string)$tag->tag_slug),
@@ -311,10 +247,6 @@ class WordpressImporter
         return $this->tags;
     }
 
-    /**
-     * @param string $type
-     * @return array
-     */
     protected function savePostsAndPages(string $type = 'post'): array
     {
         foreach ($this->wpXML->channel->item as $item) {
@@ -324,14 +256,14 @@ class WordpressImporter
                 continue;
             }
 
-            $postmeta = [];
+            $postMeta = [];
             foreach ($wpData->postmeta as $value) {
-                $postmeta[] = (array) $value;
+                $postMeta[] = (array) $value;
             }
 
             $content = $item->children('content', true);
             $excerpt = $item->children('excerpt', true);
-            $image = isset($this->attachments[(string)$wpData->post_id]) ? $this->attachments[(string)$wpData->post_id] : '';
+            $image = $this->attachments[(string)$wpData->post_id] ?? '';
 
             $author = null;
             $dc = $item->children('dc', true);
@@ -378,7 +310,7 @@ class WordpressImporter
                         $post->created_at = Carbon::parse((string)$wpData->post_date);
                         $post->updated_at = Carbon::parse((string)$wpData->post_date);
                     }
-                    $post->views = $this->getMetaValue($postmeta, 'post_views_count', 0);
+                    $post->views = $this->getMetaValue($postMeta, 'post_views_count', 0);
                     $post->save();
 
                     if (! $this->copyCategories && ! empty($this->defaultCategoryId)) {
@@ -387,9 +319,9 @@ class WordpressImporter
                         $post->categories()->attach($this->categories[$category]['id']);
                     }
 
-                    Slug::create([
+                    Slug::query()->create([
                         'reference_type' => Post::class,
-                        'reference_id' => $post->id,
+                        'reference_id' => $post->getKey(),
                         'key' => Str::slug($slug),
                         'prefix' => SlugHelper::getPrefix(Post::class),
                     ]);
@@ -398,7 +330,7 @@ class WordpressImporter
                         LanguageMeta::saveMetaData($post, Language::getDefaultLocaleCode());
                     }
 
-                    $this->saveMetaBoxData($post, $postmeta);
+                    $this->saveMetaBoxData($post, $postMeta);
                 } elseif ($type == 'page') {
                     $data = [
                         'user_id' => ! empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->id(),
@@ -420,9 +352,9 @@ class WordpressImporter
                     }
                     $page->save();
 
-                    Slug::create([
+                    Slug::query()->create([
                         'reference_type' => Page::class,
-                        'reference_id' => $page->id,
+                        'reference_id' => $page->getKey(),
                         'key' => Str::slug($slug),
                         'prefix' => SlugHelper::getPrefix(Page::class),
                     ]);
@@ -431,7 +363,7 @@ class WordpressImporter
                         LanguageMeta::saveMetaData($page, Language::getDefaultLocaleCode());
                     }
 
-                    $this->saveMetaBoxData($page, $postmeta);
+                    $this->saveMetaBoxData($page, $postMeta);
                 }
             }
         }
@@ -442,16 +374,16 @@ class WordpressImporter
         ];
     }
 
-    protected function saveMetaBoxData(Model $model, array $postmeta)
+    protected function saveMetaBoxData(Model $model, array $postMeta): void
     {
         if ($this->loadSEOMetaFromYoastSEO) {
             $seoMeta = [];
 
-            if ($seoTitle = $this->getMetaValue($postmeta, '_yoast_wpseo_title')) {
+            if ($seoTitle = $this->getMetaValue($postMeta, '_yoast_wpseo_title')) {
                 $seoMeta['seo_title'] = $seoTitle;
             }
 
-            if ($seoDesc = $this->getMetaValue($postmeta, '_yoast_wpseo_metadesc')) {
+            if ($seoDesc = $this->getMetaValue($postMeta, '_yoast_wpseo_metadesc')) {
                 $seoMeta['seo_description'] = $seoDesc;
             }
 
@@ -461,9 +393,9 @@ class WordpressImporter
         }
     }
 
-    protected function getMetaValue(array $postmeta, string $key, $default = '')
+    protected function getMetaValue(array $postMeta, string $key, $default = '')
     {
-        return Arr::get(Arr::first($postmeta, function ($value) use ($key) {
+        return Arr::get(Arr::first($postMeta, function ($value) use ($key) {
             return Arr::get($value, 'meta_key') == $key;
         }, []), 'meta_value', $default);
     }
@@ -482,7 +414,7 @@ class WordpressImporter
      * @param bool $br Optional. If set, this will convert all remaining line-breaks after paragraphing. Default true.
      * @return string Text which has been converted into correct paragraph tags.
      */
-    protected function autop($pee, $br = true)
+    protected function autop($pee, bool $br = true)
     {
         $preTags = [];
 
@@ -492,7 +424,7 @@ class WordpressImporter
 
         $pee = $pee . "\n"; // just to make things a little easier, pad the end
 
-        if (strpos($pee, '<pre') !== false) {
+        if (str_contains($pee, '<pre')) {
             $peeParts = explode('</pre>', $pee);
             $lastPee = array_pop($peeParts);
             $pee = '';
@@ -524,7 +456,7 @@ class WordpressImporter
         $pee = preg_replace('!(<' . $allBlocks . '[^>]*>)!', "\n$1", $pee);
         $pee = preg_replace('!(</' . $allBlocks . '>)!', "$1\n\n", $pee);
         $pee = str_replace(["\r\n", "\r"], "\n", $pee); // cross-platform newlines
-        if (strpos($pee, '<object') !== false) {
+        if (str_contains($pee, '<object')) {
             $pee = preg_replace('|\s*<param([^>]*)>\s*|', '<param$1>', $pee); // no pee inside object/embed
             $pee = preg_replace('|\s*</embed>\s*|', '</embed>', $pee);
         }
@@ -569,18 +501,14 @@ class WordpressImporter
         return $pee;
     }
 
-    /**
-     * @param string $image
-     * @return string
-     */
-    protected function getImage($image)
+    protected function getImage(string|null $image): string|null
     {
         if (! empty($image) && $this->copyImages) {
             $info = pathinfo($image);
 
             try {
                 $contents = file_get_contents($image);
-            } catch (Exception $exception) {
+            } catch (Exception) {
                 return $image;
             }
 
@@ -590,7 +518,7 @@ class WordpressImporter
 
             $path = '/tmp';
             if (! File::isDirectory($path)) {
-                File::makeDirectory($path, 0755);
+                File::makeDirectory($path);
             }
 
             $path = $path . '/' . $info['basename'];
@@ -604,7 +532,7 @@ class WordpressImporter
 
             File::delete($path);
 
-            if ($result['error'] == false) {
+            if (! $result['error']) {
                 $image = $result['data']->url;
             }
         }

@@ -1,5 +1,7 @@
 <?php
 
+use Illuminate\Support\Facades\Route;
+
 Route::group([
     'namespace' => 'Botble\WordpressImporter\Http\Controllers',
     'middleware' => ['web', 'core'],

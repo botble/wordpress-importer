@@ -3,7 +3,6 @@
 namespace Botble\WordpressImporter\Providers;
 
 use Botble\Base\Traits\LoadAndPublishDataTrait;
-use Event;
 use Illuminate\Routing\Events\RouteMatched;
 use Illuminate\Support\ServiceProvider;
 
@@ -11,20 +10,15 @@ class WordpressImporterServiceProvider extends ServiceProvider
 {
     use LoadAndPublishDataTrait;
 
-    /**
-     * Register any application services.
-     *
-     * @return void
-     */
-    public function register()
+    public function boot(): void
     {
         $this->setNamespace('plugins/wordpress-importer')
             ->loadAndPublishViews()
             ->loadAndPublishTranslations()
             ->publishAssets()
-            ->loadRoutes(['web']);
+            ->loadRoutes();
 
-        Event::listen(RouteMatched::class, function () {
+        $this->app['events']->listen(RouteMatched::class, function () {
             if (! dashboard_menu()->hasItem('cms-core-tools')) {
                 dashboard_menu()->registerItem([
                     'id' => 'cms-core-tools',
