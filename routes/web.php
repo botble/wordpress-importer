@@ -1,24 +1,24 @@
 <?php
 
+use Botble\Base\Facades\AdminHelper;
+use Botble\WordpressImporter\Http\Controllers\WordpressImporterController;
 use Illuminate\Support\Facades\Route;
 
-Route::group([
-    'namespace' => 'Botble\WordpressImporter\Http\Controllers',
-    'middleware' => ['web', 'core'],
-], function () {
-    Route::group(['prefix' => BaseHelper::getAdminPrefix(), 'middleware' => 'auth'], function () {
-        Route::group(['prefix' => '/tools'], function () {
-            Route::get('wordpress-importer', [
-                'as' => 'wordpress-importer',
-                'uses' => 'WordpressImporterController@index',
-                'permission' => 'settings.options',
-            ]);
+AdminHelper::registerRoutes(function () {
+    Route::group([
+        'controller' => WordpressImporterController::class,
+        'prefix' => '/tools/wordpress-importer',
+    ], function () {
+        Route::get('/', [
+            'as' => 'wordpress-importer',
+            'uses' => 'index',
+            'permission' => 'settings.options',
+        ]);
 
-            Route::post('wordpress-importer', [
-                'as' => 'wordpress-importer.post',
-                'uses' => 'WordpressImporterController@import',
-                'permission' => 'settings.options',
-            ]);
-        });
+        Route::post('/', [
+            'as' => 'wordpress-importer.post',
+            'uses' => 'import',
+            'permission' => 'settings.options',
+        ]);
     });
 });
