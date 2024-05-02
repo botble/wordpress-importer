@@ -4,6 +4,8 @@ namespace Botble\WordpressImporter\Http\Controllers;
 
 use Botble\Base\Facades\Assets;
 use Botble\Base\Http\Controllers\BaseController;
+use Botble\Blog\Models\Category;
+use Botble\WordpressImporter\Forms\WordpressImporterForm;
 use Botble\WordpressImporter\Http\Requests\WordpressImporterRequest;
 use Botble\WordpressImporter\WordpressImporter;
 
@@ -11,12 +13,13 @@ class WordpressImporterController extends BaseController
 {
     public function index()
     {
-        Assets::addScriptsDirectly('vendor/core/plugins/wordpress-importer/js/wordpress-importer.js')
-            ->addStylesDirectly('vendor/core/plugins/wordpress-importer/css/wordpress-importer.css');
+        Assets::addScriptsDirectly('vendor/core/plugins/wordpress-importer/js/wordpress-importer.js');
 
         $this->pageTitle(trans('plugins/wordpress-importer::wordpress-importer.name'));
 
-        return view('plugins/wordpress-importer::import');
+        $form = WordpressImporterForm::create();
+
+        return view('plugins/wordpress-importer::import', compact('form'));
     }
 
     public function import(WordpressImporterRequest $request, WordpressImporter $wordpressImporter)
@@ -35,5 +38,12 @@ class WordpressImporterController extends BaseController
         return $this
             ->httpResponse()
             ->setMessage(trans('plugins/wordpress-importer::wordpress-importer.import_success', $result));
+    }
+
+    public function ajaxCategories()
+    {
+        return $this
+            ->httpResponse()
+            ->setData(Category::query()->select('name', 'id')->paginate());
     }
 }
