@@ -9,11 +9,16 @@ class WordpressImporterRequest extends Request
 {
     public function rules(): array
     {
-        return [
+        $rules = [
             'wpexport' => ['required', 'mimetypes:text/xml,application/xml'],
-            'copy_categories' => [new OnOffRule()],
-            'default_category_id' => ['required_if:copy_categories,0'],
             'timeout' => ['integer'],
         ];
+
+        if (is_plugin_active('blog')) {
+            $rules['copy_categories'] = [new OnOffRule()];
+            $rules['default_category_id'] = ['required_if:copy_categories,0'];
+        }
+
+        return $rules;
     }
 }

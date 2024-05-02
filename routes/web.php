@@ -13,8 +13,11 @@ AdminHelper::registerRoutes(function () {
     ], function () {
         Route::get('/', [WordpressImporterController::class, 'index'])->name('wordpress-importer');
         Route::post('/', [WordpressImporterController::class, 'import'])->name('wordpress-importer.post');
-        Route::post('/ajax/categories', [WordpressImporterController::class, 'ajaxCategories'])
-            ->middleware(RequiresJsonRequestMiddleware::class)
-            ->name('wordpress-importer.ajax.categories');
+
+        if (is_plugin_active('blog')) {
+            Route::post('/ajax/categories', [WordpressImporterController::class, 'ajaxCategories'])
+                ->middleware(RequiresJsonRequestMiddleware::class)
+                ->name('wordpress-importer.ajax.categories');
+        }
     });
 });

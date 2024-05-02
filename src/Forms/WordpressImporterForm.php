@@ -39,20 +39,23 @@ class WordpressImporterForm extends FormAbstract
                     ->helperText(trans('plugins/wordpress-importer::wordpress-importer.copy_images_description'))
                     ->defaultValue(true)
             )
-            ->add(
-                'copy_categories',
-                OnOffField::class,
-                OnOffFieldOption::make()
-                    ->label(trans('plugins/wordpress-importer::wordpress-importer.copy_categories'))
-                    ->helperText(trans('plugins/wordpress-importer::wordpress-importer.copy_categories_description'))
-                    ->defaultValue(true)
-            )
-            ->add(
-                'category_select',
-                HtmlField::class,
-                HtmlFieldOption::make()
-                    ->content(view('plugins/wordpress-importer::partials.category-select'))
-            )
+            ->when(is_plugin_active('blog'), function (FormAbstract $form) {
+                $form
+                    ->add(
+                        'copy_categories',
+                        OnOffField::class,
+                        OnOffFieldOption::make()
+                            ->label(trans('plugins/wordpress-importer::wordpress-importer.copy_categories'))
+                            ->helperText(trans('plugins/wordpress-importer::wordpress-importer.copy_categories_description'))
+                            ->defaultValue(true)
+                    )
+                    ->add(
+                        'category_select',
+                        HtmlField::class,
+                        HtmlFieldOption::make()
+                            ->content(view('plugins/wordpress-importer::partials.category-select'))
+                    );
+            })
             ->add(
                 'load_seo_meta_from_yoast_seo',
                 OnOffField::class,

@@ -101,12 +101,15 @@ class WordpressImporter
         $this->saveAttachments();
         $this->saveAuthors();
 
-        if ($this->copyCategories) {
-            $this->saveCategories();
+        if (is_plugin_active('blog')) {
+            if ($this->copyCategories) {
+                $this->saveCategories();
+            }
+
+            $this->saveTags();
+            $this->savePostsAndPages();
         }
 
-        $this->saveTags();
-        $this->savePostsAndPages();
         $this->savePostsAndPages('page');
 
         return [
