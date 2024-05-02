@@ -1,6 +1,7 @@
 <?php
 
 use Botble\Base\Facades\AdminHelper;
+use Botble\Base\Http\Middleware\RequiresJsonRequestMiddleware;
 use Botble\WordpressImporter\Http\Controllers\WordpressImporterController;
 use Illuminate\Support\Facades\Route;
 
@@ -8,17 +9,12 @@ AdminHelper::registerRoutes(function () {
     Route::group([
         'controller' => WordpressImporterController::class,
         'prefix' => '/tools/wordpress-importer',
+        'permission' => 'settings.options',
     ], function () {
-        Route::get('/', [
-            'as' => 'wordpress-importer',
-            'uses' => 'index',
-            'permission' => 'settings.options',
-        ]);
-
-        Route::post('/', [
-            'as' => 'wordpress-importer.post',
-            'uses' => 'import',
-            'permission' => 'settings.options',
-        ]);
+        Route::get('/', [WordpressImporterController::class, 'index'])->name('wordpress-importer');
+        Route::post('/', [WordpressImporterController::class, 'import'])->name('wordpress-importer.post');
+        Route::post('/ajax/categories', [WordpressImporterController::class, 'ajaxCategories'])
+            ->middleware(RequiresJsonRequestMiddleware::class)
+            ->name('wordpress-importer.ajax.categories');
     });
 });

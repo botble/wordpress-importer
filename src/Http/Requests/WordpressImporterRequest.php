@@ -2,8 +2,8 @@
 
 namespace Botble\WordpressImporter\Http\Requests;
 
+use Botble\Base\Rules\OnOffRule;
 use Botble\Support\Http\Requests\Request;
-use Illuminate\Validation\Rule;
 
 class WordpressImporterRequest extends Request
 {
@@ -11,7 +11,7 @@ class WordpressImporterRequest extends Request
     {
         return [
             'wpexport' => ['required', 'mimetypes:text/xml,application/xml'],
-            'copy_categories' => Rule::in(['0', '1']),
+            'copy_categories' => [new OnOffRule()],
             'default_category_id' => ['required_if:copy_categories,0'],
             'timeout' => ['integer'],
         ];

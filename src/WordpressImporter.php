@@ -80,6 +80,7 @@ class WordpressImporter
 
         $this->copyImages = (bool) $request->input('copyimages');
         $this->wpXML = simplexml_load_file($xmlFile, 'SimpleXMLElement', LIBXML_NOCDATA);
+
         $this->copyCategories = (bool) $request->input('copy_categories');
         if ($request->has('default_category_id')) {
             $this->defaultCategoryId = $request->input('default_category_id');
