@@ -24,7 +24,7 @@ class WordpressImporterForm extends FormAbstract
             ->add(
                 'open_left_column',
                 HtmlField::class,
-                HtmlFieldOption::make()->content('<div class="col">')
+                HtmlFieldOption::make()->content('<div class="col-12">')
             )
             ->add(
                 'left_column_heading',
@@ -65,7 +65,7 @@ class WordpressImporterForm extends FormAbstract
                     ->defaultValue(true)
             )
             ->add('close_left_column', HtmlField::class, HtmlFieldOption::make()->content('</div>'))
-            ->add('open_right_column', HtmlField::class, HtmlFieldOption::make()->content('<div class="col">'))
+            ->add('open_right_column', HtmlField::class, HtmlFieldOption::make()->content('<div class="col-12">'))
             ->add(
                 'right_column_heading',
                 HtmlField::class,
