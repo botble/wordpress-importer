@@ -5,7 +5,7 @@
     "provider": "Botble\\WordpressImporter\\Providers\\WordpressImporterServiceProvider",
     "author": "Botble Technologies",
     "url": "https://botble.com",
-    "version": "1.4.0",
+    "version": "1.4.1",
     "description": "Import your WordPress posts, pages, categories, tags, and users from the WP XML export file.",
     "minimum_core_version": "7.2.0"
 }
