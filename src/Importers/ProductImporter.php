@@ -3,22 +3,37 @@
 namespace Botble\WordpressImporter\Importers;
 
 use Botble\Base\Enums\BaseStatusEnum;
+use Botble\Base\Events\CreatedContentEvent;
+use Botble\Base\Facades\BaseHelper;
 use Botble\DataSynchronize\Contracts\Importer\WithMapping;
 use Botble\DataSynchronize\Importer\ImportColumn;
 use Botble\DataSynchronize\Importer\Importer;
 use Botble\Ecommerce\Enums\ProductTypeEnum;
 use Botble\Ecommerce\Enums\StockStatusEnum;
 use Botble\Ecommerce\Models\Product;
+use Botble\Ecommerce\Models\ProductAttributeSet;
 use Botble\Ecommerce\Models\ProductCategory;
+use Botble\Ecommerce\Models\ProductVariation;
 use Botble\Ecommerce\Services\Products\StoreProductService;
+use Botble\Ecommerce\Services\StoreProductTagService;
 use Botble\Slug\Facades\SlugHelper;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class ProductImporter extends Importer implements WithMapping
 {
     protected Collection $categories;
+
+    protected Collection $productAttributeSets;
+
+    public function getLabel(): string
+    {
+        return trans('plugins/wordpress-importer::wordpress-importer.data_synchronize.import_products.name');
+    }
 
     public function headerToSnakeCase(): bool
     {
@@ -30,48 +45,63 @@ class ProductImporter extends Importer implements WithMapping
         return 20;
     }
 
+    public function showRulesCheatSheet(): bool
+    {
+        return false;
+    }
+
+    public function mergeWithUndefinedColumns(): bool
+    {
+        return true;
+    }
+
     public function columns(): array
     {
         return [
-            ImportColumn::make('id', 'ID'),
-            ImportColumn::make('type', 'Type'),
-            ImportColumn::make('sku', 'SKU'),
-            ImportColumn::make('name', 'Name'),
-            ImportColumn::make('published', 'Published'),
-            ImportColumn::make('featured', 'Is featured?'),
-            ImportColumn::make('catalog_visibility', 'Visibility in catalog'),
-            ImportColumn::make('short_description', 'Short description'),
-            ImportColumn::make('description', 'Description'),
-            ImportColumn::make('date_on_sale_from', 'Date sale price starts'),
-            ImportColumn::make('date_on_sale_to', 'Date sale price ends'),
-            ImportColumn::make('tax_status', 'Tax status'),
-            ImportColumn::make('tax_class', 'Tax class'),
-            ImportColumn::make('stock_status', 'In stock?'),
-            ImportColumn::make('stock', 'Stock'),
-            ImportColumn::make('low_stock_amount', 'Low stock amount'),
-            ImportColumn::make('backorders', 'Backorders allowed?'),
-            ImportColumn::make('sold_individually', 'Sold individually?'),
-            ImportColumn::make('weight', 'Weight (kg)'),
-            ImportColumn::make('length', 'Length (cm)'),
-            ImportColumn::make('width', 'Width (cm)'),
-            ImportColumn::make('height', 'Height (cm)'),
-            ImportColumn::make('reviews_allowed', 'Allow customer reviews?'),
-            ImportColumn::make('purchase_note', 'Purchase note'),
-            ImportColumn::make('sale_price', 'Sale price'),
-            ImportColumn::make('regular_price', 'Regular price'),
-            ImportColumn::make('category_ids', 'Categories'),
-            ImportColumn::make('tag_ids', 'Tags'),
-            ImportColumn::make('shipping_class_id', 'Shipping class'),
-            ImportColumn::make('images', 'Images'),
-            ImportColumn::make('download_limit', 'Download limit'),
-            ImportColumn::make('download_expiry', 'Download expiry days'),
-            ImportColumn::make('parent_id', 'Parent'),
-            ImportColumn::make('grouped_products', 'Grouped products'),
-            ImportColumn::make('upsell_ids', 'Upsells'),
-            ImportColumn::make('cross_sell_ids', 'Cross-sells'),
-            ImportColumn::make('product_url', 'External URL'),
-            ImportColumn::make('button_text', 'Button text'),
-            ImportColumn::make('position', 'Position'),
+            ImportColumn::make('type', 'Type')
+                ->rules(['required', 'string', Rule::in(['simple, downloadable, virtual', 'simple', 'grouped', 'external', 'variation', 'variable'])]),
+            ImportColumn::make('sku', 'SKU')
+                ->rules(['nullable', 'string']),
+            ImportColumn::make('name', 'Name')
+                ->rules(['required', 'string']),
+            ImportColumn::make('published', 'Published')
+                ->rules(['required', 'boolean']),
+            ImportColumn::make('featured', 'Is featured?')
+                ->rules(['required', 'boolean']),
+            ImportColumn::make('short_description', 'Short description')
+                ->rules(['nullable', 'string', 'max:400']),
+            ImportColumn::make('description', 'Description')
+                ->rules(['nullable', 'string', 'max:300000']),
+            ImportColumn::make('date_on_sale_from', 'Date sale price starts')
+                ->rules(['nullable', 'datetime']),
+            ImportColumn::make('date_on_sale_to', 'Date sale price ends')
+                ->rules(['nullable', 'datetime']),
+            ImportColumn::make('in_stock', 'In stock?')
+                ->rules(['required', 'boolean']),
+            ImportColumn::make('stock', 'Stock')
+                ->rules(['nullable', 'numeric']),
+            ImportColumn::make('weight', 'Weight (kg)')
+                ->rules(['nullable', 'numeric']),
+            ImportColumn::make('length', 'Length (cm)')
+                ->rules(['nullable', 'numeric']),
+            ImportColumn::make('width', 'Width (cm)')
+                ->rules(['nullable', 'numeric']),
+            ImportColumn::make('height', 'Height (cm)')
+                ->rules(['nullable', 'numeric']),
+            ImportColumn::make('sale_price', 'Sale price')
+                ->rules(['nullable', 'numeric']),
+            ImportColumn::make('regular_price', 'Regular price')
+                ->rules(['nullable', 'numeric']),
+            ImportColumn::make('category_ids', 'Categories')
+                ->rules(['nullable', 'string']),
+            ImportColumn::make('tags', 'Tags')
+                ->rules(['nullable', 'string']),
+            ImportColumn::make('images', 'Images')
+                ->rules(['nullable', 'string']),
+            ImportColumn::make('parent', 'Parent')
+                ->rules(['nullable', 'string']),
+            ImportColumn::make('position', 'Position')
+                ->rules(['required', 'numeric']),
         ];
     }
 
@@ -88,34 +118,203 @@ class ProductImporter extends Importer implements WithMapping
     public function handle(array $data): int
     {
         $this->categories = ProductCategory::all();
+        $this->productAttributeSets = ProductAttributeSet::query()
+            ->with('attributes')
+            ->get();
 
         $count = 0;
 
         foreach ($data as $row) {
-            $this->storeProduct($row);
+            if ($row['product_type'] === ProductTypeEnum::DIGITAL) {
+                $externalFiles = [];
+
+                foreach ($row as $key => $value) {
+                    if (empty($value)) {
+                        continue;
+                    }
+
+                    if (preg_match('/^Download (\d+) (name|URL)$/', $key, $matches)) {
+                        $newKey = $matches[1];
+                        $key = $matches[2] === 'URL' ? 'link' : 'name';
+                        $externalFiles[$newKey][$key] = $value;
+                    }
+                }
+
+                $row['product_files_external'] = $externalFiles;
+            }
+
+            if ($row['type'] === 'variation' && $row['parent']) {
+                $parentProduct = $this->getProduct($row['parent']) ?: $this->storeProduct($row);
+
+                $product = $this->storeVariation($parentProduct, $row);
+            } else {
+                $product = $this->storeProduct($row);
+            }
+
+            if ($product->wasRecentlyCreated) {
+                $count++;
+            }
         }
 
         return $count;
     }
 
-    protected function storeProduct(array $row): Product
+    protected function getImages(string $images): array
     {
-        $request = new Request();
-
-        $images = $row['images'] ? str($row['images'])
+        return $images ? str($images)
             ->explode(',')
             ->map(fn ($image) => $this->resolveMediaImage(trim($image), 'products'))
             ->all() : [];
+    }
+
+    protected function storeProduct(array $row): Product
+    {
+        /** @var Product $product */
+        $product = Product::query()->where('sku', $row['sku'])->first();
+
+        if ($product) {
+            return $product;
+        }
+
+        $request = new Request();
 
         $request->merge([
             ...$row,
+            'stock_status' => $row['in_stock'] ? StockStatusEnum::IN_STOCK : StockStatusEnum::OUT_OF_STOCK,
             'categories' => $this->resolveCategories($row['category_ids']),
-            'images' => $images,
+            'images' => $this->getImages($row['images']),
         ]);
 
         $product = new Product();
         $product = (new StoreProductService())->execute($request, $product);
         SlugHelper::createSlug($product);
+
+        $tags = str(Arr::get($row, 'tags'))->explode(',')->map(fn ($tag) => ['value' => trim($tag)])->toJson();
+
+        if ($tags) {
+            $request->merge(['tag' => $tags]);
+        }
+
+        (new StoreProductTagService())->execute($request, $product);
+
+        return $product;
+    }
+
+    protected function storeVariation(Product $product, array $row): Product|ProductVariation
+    {
+        $request = new Request();
+        $request->merge([
+            ...$row,
+            'stock_status' => $row['in_stock'] ? StockStatusEnum::IN_STOCK : StockStatusEnum::OUT_OF_STOCK,
+        ]);
+
+        $addedAttributes = $request->input('attribute_sets', []);
+
+        $result = ProductVariation::getVariationByAttributesOrCreate($product->id, $addedAttributes);
+
+        $variation = $result['variation'];
+
+        $version = [...$variation->toArray(), ...$request->toArray()];
+        $sku = Arr::get($version, 'sku');
+
+        /** @var Product $existingVariation */
+        $existingVariation = Product::query()->where('is_variation', true)->where('sku', $sku)->first();
+
+        if ($sku && $existingVariation) {
+            return $existingVariation;
+        }
+
+        $version['variation_default_id'] = Arr::get($version, 'is_variation_default') ? $version['id'] : null;
+        $version['attribute_sets'] = $addedAttributes;
+
+        if ($version['description']) {
+            $version['description'] = BaseHelper::clean($version['description']);
+        }
+
+        if ($version['content']) {
+            $version['content'] = BaseHelper::clean($version['content']);
+        }
+
+        $productRelatedToVariation = new Product();
+        $productRelatedToVariation->fill($version);
+
+        $productRelatedToVariation->name = $product->name;
+        $productRelatedToVariation->status = $product->status;
+        $productRelatedToVariation->brand_id = $product->brand_id;
+        $productRelatedToVariation->is_variation = 1;
+
+        $productRelatedToVariation->sku = Arr::get($version, 'sku');
+        if (! $productRelatedToVariation->sku && Arr::get($version, 'auto_generate_sku')) {
+            $productRelatedToVariation->sku = $product->sku;
+            foreach ($version['attribute_sets'] as $setId => $attributeId) {
+                $attributeSet = $this->productAttributeSets->firstWhere('id', $setId);
+                if ($attributeSet) {
+                    $attribute = $attributeSet->attributes->firstWhere('id', $attributeId);
+                    if ($attribute) {
+                        $productRelatedToVariation->sku .= '-' . Str::upper($attribute->slug);
+                    }
+                }
+            }
+        }
+
+        $productRelatedToVariation->price = Arr::get($version, 'price', $product->price);
+        $productRelatedToVariation->sale_price = Arr::get($version, 'sale_price', $product->sale_price);
+
+        if (Arr::get($version, 'description')) {
+            $productRelatedToVariation->description = BaseHelper::clean($version['description']);
+        }
+
+        if (Arr::get($version, 'content')) {
+            $productRelatedToVariation->content = BaseHelper::clean($version['content']);
+        }
+
+        $productRelatedToVariation->length = Arr::get($version, 'length', $product->length);
+        $productRelatedToVariation->wide = Arr::get($version, 'wide', $product->wide);
+        $productRelatedToVariation->height = Arr::get($version, 'height', $product->height);
+        $productRelatedToVariation->weight = Arr::get($version, 'weight', $product->weight);
+
+        $productRelatedToVariation->sale_type = (int) Arr::get($version, 'sale_type', $product->sale_type);
+
+        if ($productRelatedToVariation->sale_type == 0) {
+            $productRelatedToVariation->start_date = null;
+            $productRelatedToVariation->end_date = null;
+        } else {
+            $productRelatedToVariation->start_date = Carbon::parse(
+                Arr::get($version, 'start_date', $product->start_date)
+            )->toDateTimeString();
+            $productRelatedToVariation->end_date = Carbon::parse(
+                Arr::get($version, 'end_date', $product->end_date)
+            )->toDateTimeString();
+        }
+
+        $productRelatedToVariation->images = json_encode($this->getImages($row['images']));
+
+        $productRelatedToVariation->status = strtolower(Arr::get($version, 'status', $product->status));
+
+        $productRelatedToVariation->product_type = $product->product_type;
+        $productRelatedToVariation->save();
+
+        event(new CreatedContentEvent(PRODUCT_MODULE_SCREEN_NAME, $request, $productRelatedToVariation));
+
+        $variation->product_id = $productRelatedToVariation->getKey();
+
+        $variation->is_default = Arr::get($version, 'variation_default_id', 0) == $variation->id;
+
+        $variation->save();
+
+        if ($version['attribute_sets']) {
+            $variation->productAttributes()->sync($version['attribute_sets']);
+        }
+
+        return $variation;
+    }
+
+    protected function getProduct(string $sku): ?Product
+    {
+        /** @var Product $product */
+        $product =  Product::query()
+            ->where('sku', $sku)
+            ->first();
 
         return $product;
     }
@@ -169,7 +368,7 @@ class ProductImporter extends Importer implements WithMapping
             'images' => $row['images'],
             'sku' => $row['sku'],
             'quantity' => (int) $row['stock'],
-            'stock_status' => $row['stock_status'] ? StockStatusEnum::IN_STOCK : StockStatusEnum::OUT_OF_STOCK,
+            'in_stock' => (bool) $row['in_stock'],
             'is_featured' => (bool) $row['featured'],
             'weight' => (float) $row['weight'],
             'height' => (float) $row['height'],
@@ -179,7 +378,7 @@ class ProductImporter extends Importer implements WithMapping
             'price' => (float) $row['regular_price'],
             'start_date' => $row['date_on_sale_from'],
             'end_date' => $row['date_on_sale_to'],
-            'is_variation' => (bool) $row['parent_id'],
+            'is_variation' => (bool) $row['parent'],
             'order' => (int) $row['position'],
             'product_type' => match ($row['type']) {
                 'simple, downloadable, virtual' => ProductTypeEnum::DIGITAL,
