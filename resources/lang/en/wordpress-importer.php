@@ -14,6 +14,7 @@ return [
     'max_timeout' => 'Max Timeout in Seconds',
     'wp_xml_file' => 'Wordpress XML file',
     'wp_xml_file_description' => 'Inside of your Wordpress Admin you can chose to export data by visiting Tools->Export.',
+    'import' => 'Import',
     'xml_file_required' => 'Please specify a Wordpress XML file that you would like to upload.',
     'invalid_xml_file' => 'Invalid file type. Please make sure you are uploading a Wordpress XML export file.',
     'import_success' => 'Imported :posts posts, :pages pages, :categories categories, :tags tags, and :users users successfully!',
