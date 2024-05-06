@@ -16,13 +16,19 @@ use Botble\Ecommerce\Models\ProductCategory;
 use Botble\Ecommerce\Models\ProductVariation;
 use Botble\Ecommerce\Services\Products\StoreProductService;
 use Botble\Ecommerce\Services\StoreProductTagService;
+use Botble\Media\Facades\RvMedia;
 use Botble\Slug\Facades\SlugHelper;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Symfony\Component\Mime\MimeTypes;
+use Throwable;
 
 class ProductImporter extends Importer implements WithMapping
 {
@@ -124,34 +130,26 @@ class ProductImporter extends Importer implements WithMapping
 
         $count = 0;
 
+        $productFiles = [];
+
         foreach ($data as $row) {
-            if ($row['product_type'] === ProductTypeEnum::DIGITAL) {
-                $externalFiles = [];
-
-                foreach ($row as $key => $value) {
-                    if (empty($value)) {
-                        continue;
-                    }
-
-                    if (preg_match('/^Download (\d+) (name|URL)$/', $key, $matches)) {
-                        $newKey = $matches[1];
-                        $key = $matches[2] === 'URL' ? 'link' : 'name';
-                        $externalFiles[$newKey][$key] = $value;
-                    }
-                }
-
-                $row['product_files_external'] = $externalFiles;
-            }
-
             if ($row['type'] === 'variation' && $row['parent']) {
                 $parentProduct = $this->getProduct($row['parent']) ?: $this->storeProduct($row);
-
                 $product = $this->storeVariation($parentProduct, $row);
             } else {
                 $product = $this->storeProduct($row);
+                $productFile = $this->resolveProductLinks($row, $product);
+
+                if ($productFile) {
+                    $productFiles[] = $productFile;
+                }
             }
 
             if ($product->wasRecentlyCreated) {
+                if (! empty($productFiles)) {
+                    $this->saveDigitalProductFiles($productFiles);
+                }
+
                 $count++;
             }
         }
@@ -159,12 +157,119 @@ class ProductImporter extends Importer implements WithMapping
         return $count;
     }
 
-    protected function getImages(string $images): array
+    protected function resolveProductLinks(array $row, Product $product): array
     {
-        return $images ? str($images)
-            ->explode(',')
-            ->map(fn ($image) => $this->resolveMediaImage(trim($image), 'products'))
-            ->all() : [];
+        if ($row['product_type'] !== ProductTypeEnum::DIGITAL) {
+            return [];
+        }
+
+        $links = [];
+
+        foreach ($row as $key => $value) {
+            if (empty($value)) {
+                continue;
+            }
+
+            if (preg_match('/^Download (\d+) (name|URL)$/', $key, $matches)) {
+                $newKey = $matches[2] === 'URL' ? 'link' : 'name';
+
+                $links[$matches[1]][$newKey] = $value;
+                $links[$matches[1]]['product'] = $product;
+            }
+        }
+
+        return $links;
+    }
+
+    protected function saveDigitalProductFiles(array $productFiles): void
+    {
+        $storeProductService = new StoreProductService();
+        $maximumAllowedSize = 10 * 1024 * 1024;
+        $serverMaxUploadFileSize = RvMedia::getServerConfigMaxUploadFileSize();
+        $maximumAllowedSize = min($serverMaxUploadFileSize, $maximumAllowedSize);
+
+        foreach ($productFiles as $productFile) {
+            foreach ($productFile as $value) {
+                if (empty($value['link']) || empty($value['name']) || empty($value['product'])) {
+                    continue;
+                }
+
+                $downloadedFile = false;
+                $fileSize = 0;
+                $link = $value['link'];
+                $product = $value['product'];
+
+                try {
+                    $fileSize = get_headers($link, true)['Content-Length'];
+
+                    if ($fileSize < $maximumAllowedSize) {
+                        $info = pathinfo($link);
+
+                        $response = Http::withoutVerifying()->get($link);
+
+                        if ($response->ok() && $response->body()) {
+                            $contents = $response->body();
+
+                            $path = '/tmp';
+                            File::ensureDirectoryExists($path);
+
+                            $path = $path . '/' . Str::limit($info['basename'], 50, '');
+                            file_put_contents($path, $contents);
+
+                            $fileUpload = $this->newUploadedFile($path);
+
+                            $data = $storeProductService->saveProductFile($fileUpload);
+                            $link = $data['url'];
+
+                            $downloadedFile = true;
+                        }
+                    }
+                } catch (Throwable $throwable) {
+                    BaseHelper::logError($throwable);
+                }
+
+                $product->productFiles()->create([
+                    'url' => $link,
+                    'extras' => [
+                        'is_external' => ! $downloadedFile,
+                        'name' => $value['name'],
+                        'size' => $fileSize,
+                    ],
+                ]);
+            }
+        }
+    }
+
+    protected function newUploadedFile(string $path, ?string $defaultMimeType = null): UploadedFile
+    {
+        $mimeType = RvMedia::getMimeType($path);
+
+        if (empty($mimeType)) {
+            $mimeType = $defaultMimeType;
+        }
+
+        $fileName = File::name($path);
+        $fileExtension = File::extension($path);
+
+        if (empty($fileExtension) && $mimeType) {
+            $mimeTypeDetection = (new MimeTypes())->getExtensions($mimeType);
+
+            $fileExtension = Arr::first($mimeTypeDetection);
+        }
+
+        return new UploadedFile($path, $fileName . '.' . $fileExtension, $mimeType, null, true);
+    }
+
+    protected function getImages(string $data): array
+    {
+        $images = [];
+        $items = array_filter(explode(',', $data));
+
+        foreach ($items as $image) {
+            $images[] = $this->resolveMediaImage(trim($image), 'products');
+        }
+
+        return $images;
     }
 
     protected function storeProduct(array $row): Product
@@ -312,7 +417,7 @@ class ProductImporter extends Importer implements WithMapping
     protected function getProduct(string $sku): ?Product
     {
         /** @var Product $product */
-        $product =  Product::query()
+        $product = Product::query()
             ->where('sku', $sku)
             ->first();
 
