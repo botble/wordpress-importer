@@ -134,9 +134,11 @@ class ProductImporter extends Importer implements WithMapping
 
         foreach ($data as $row) {
             if ($row['type'] === 'variation' && $row['parent']) {
+                $this->resolveProductAttributes($row);
                 $parentProduct = $this->getProduct($row['parent']) ?: $this->storeProduct($row);
                 $product = $this->storeVariation($parentProduct, $row);
             } else {
+                $this->resolveProductAttributeSet($row);
                 $product = $this->storeProduct($row);
                 $productFile = $this->resolveProductLinks($row, $product);
 
@@ -146,15 +148,83 @@ class ProductImporter extends Importer implements WithMapping
             }
 
             if ($product->wasRecentlyCreated) {
-                if (! empty($productFiles)) {
-                    $this->saveDigitalProductFiles($productFiles);
-                }
-
                 $count++;
             }
         }
 
+        if (! empty($productFiles)) {
+            $this->saveDigitalProductFiles($productFiles);
+        }
+
         return $count;
+    }
+
+    protected function resolveProductAttributes(array &$row): void
+    {
+        $attributes = [];
+        $setKey = null;
+
+        foreach ($row as $key => $value) {
+            if (empty($value) || empty($key)) {
+                continue;
+            }
+
+            if (preg_match('/^Attribute (\d+) (name|value\(s\))$/', $key, $matches)) {
+                if ($matches[2] === 'name') {
+                    $setKey = $value;
+                } else {
+                    $attributes[$setKey] = $value;
+                }
+            }
+        }
+
+        $row['attribute_sets'] = $attributes;
+    }
+
+    protected function resolveProductAttributeSet(array &$row): void
+    {
+        $sets = [];
+        $setKey = null;
+
+        foreach ($row as $key => $value) {
+            if (empty($value) || empty($key)) {
+                continue;
+            }
+
+            if (preg_match('/^Attribute (\d+) (name|value\(s\))$/', $key, $matches)) {
+                if ($matches[2] === 'name') {
+                    $setKey = $value;
+                } else {
+                    if (! str_contains($value, ', ')) {
+                        continue;
+                    }
+
+                    $sets[] = $setKey;
+                }
+            }
+        }
+
+        $attributeSets = [];
+
+        foreach ($sets as $set) {
+            $attribute = $this->productAttributeSets
+                ->filter(fn ($value) => $value['title'] === $set)
+                ->first();
+
+            if (! $attribute) {
+                /** @var ProductAttributeSet $attribute */
+                $attribute = ProductAttributeSet::query()->create([
+                    'title' => $set,
+                    'slug' => Str::slug($set),
+                ]);
+
+                $this->productAttributeSets->push($attribute);
+            }
+
+            $attributeSets[] = $attribute->getKey();
+        }
+
+        $row['attribute_sets'] = $attributeSets;
     }
 
     protected function resolveProductLinks(array $row, Product $product): array
@@ -293,6 +363,10 @@ class ProductImporter extends Importer implements WithMapping
         $product = new Product();
         $product = (new StoreProductService())->execute($request, $product);
         SlugHelper::createSlug($product);
+
+        if ($row['attribute_sets']) {
+            $product->productAttributeSets()->sync($row['attribute_sets']);
+        }
 
         $tags = str(Arr::get($row, 'tags'))->explode(',')->map(fn ($tag) => ['value' => trim($tag)])->toJson();
 
