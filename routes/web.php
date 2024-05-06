@@ -2,10 +2,7 @@
 
 use Botble\Base\Facades\AdminHelper;
 use Botble\Base\Http\Middleware\RequiresJsonRequestMiddleware;
-<<<<<<< Updated upstream
-=======
 use Botble\WordpressImporter\Http\Controllers\ImportProductController;
->>>>>>> Stashed changes
 use Botble\WordpressImporter\Http\Controllers\WordpressImporterController;
 use Illuminate\Support\Facades\Route;
 
@@ -23,8 +20,6 @@ AdminHelper::registerRoutes(function () {
                 ->middleware(RequiresJsonRequestMiddleware::class)
                 ->name('wordpress-importer.ajax.categories');
         }
-<<<<<<< Updated upstream
-=======
     });
 
     Route::prefix('tools/data-synchronize')->name('tools.data-synchronize.')->group(function () {
@@ -36,6 +31,5 @@ AdminHelper::registerRoutes(function () {
                 Route::post('download-example', [ImportProductController::class, 'downloadExample'])->name('download-example');
             });
         });
->>>>>>> Stashed changes
     });
 });
