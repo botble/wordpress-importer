@@ -19,7 +19,11 @@ class WordpressImporterController extends BaseController
         $this->pageTitle(trans('plugins/wordpress-importer::wordpress-importer.name'));
 
         $form = WordpressImporterForm::create();
-        $productImporter = ProductImporter::make();
+        $productImporter = null;
+
+        if (is_plugin_active('ecommerce')) {
+            $productImporter = ProductImporter::make();
+        }
 
         return view('plugins/wordpress-importer::import', compact('form', 'productImporter'));
     }
