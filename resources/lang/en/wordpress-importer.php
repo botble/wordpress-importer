@@ -26,6 +26,7 @@ return [
         'import_products' => [
             'name' => 'WooCommerce Products',
             'description' => 'Import WooCommerce Products data from CSV file.',
+            'export_instruction' => 'To export WooCommerce Products data to a CSV file, navigate to the WordPress admin dashboard, then go to Products -> All Products. Click on the "Export" button located at the top left corner. Select the product data you wish to export and choose the appropriate file format (CSV). Finally, click on the "Generate CSV" button to download the exported file.',
         ],
     ],
 ];

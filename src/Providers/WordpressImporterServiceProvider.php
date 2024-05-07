@@ -6,6 +6,7 @@ use Botble\Base\Facades\DashboardMenu;
 use Botble\Base\Facades\PanelSectionManager;
 use Botble\Base\PanelSections\PanelSectionItem;
 use Botble\Base\Traits\LoadAndPublishDataTrait;
+use Botble\DataSynchronize\Importer\Importer;
 use Botble\DataSynchronize\PanelSections\ImportPanelSection;
 use Illuminate\Support\ServiceProvider;
 
@@ -45,5 +46,9 @@ class WordpressImporterServiceProvider extends ServiceProvider
                     ->withRoute('tools.data-synchronize.import.woocommerce-products.index')
             );
         });
+
+        add_filter('data_synchronize_import_form_before', function (?string $html, Importer $importer): ?string {
+            return $html . view('plugins/wordpress-importer::partials.woocommerce-products-export-instruction');
+        }, 999, 2);
     }
 }
