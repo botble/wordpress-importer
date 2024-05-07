@@ -8,6 +8,9 @@
             </x-core::card.title>
         </x-core::card.header>
         <x-core::card.body>
+            <x-core::alert type="info">
+                {{ trans('plugins/wordpress-importer::wordpress-importer.description') }}
+            </x-core::alert>
             <x-core::alert type="success" class="result-message" style="display: none;" />
 
             {!! $form->renderForm() !!}

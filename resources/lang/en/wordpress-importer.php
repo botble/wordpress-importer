@@ -2,6 +2,7 @@
 
 return [
     'name' => 'Wordpress Importer',
+    'description' => 'This tool facilitates the import of WordPress blog data such as posts, tags, users, and categories into your system. If you need to import WooCommerce data, please refer to the section below for instructions.',
     'copy_images' => 'Copy Images',
     'copy_images_description' => 'Featured images for posts and pages will be copied over to your storage. If you select "No" the image references will remain the same and no images will be copied.',
     'copy_categories' => 'Copy Categories',
@@ -26,7 +27,7 @@ return [
         'import_products' => [
             'name' => 'WooCommerce Products',
             'description' => 'Import WooCommerce Products data from CSV file.',
-            'export_instruction' => 'To export WooCommerce Products data to a CSV file, navigate to the WordPress admin dashboard, then go to Products -> All Products. Click on the "Export" button located at the top left corner. Select the product data you wish to export and choose the appropriate file format (CSV). Finally, click on the "Generate CSV" button to download the exported file.',
+            'export_instruction' => 'To obtain your WooCommerce Products CSV file, navigate to the WordPress admin dashboard, then go to Products -> All Products. Click on the "Export" button located at the top left corner. Select the product data you wish to export and choose the appropriate file format (CSV). Finally, click on the "Generate CSV" button to download the exported file.',
         ],
     ],
 ];
