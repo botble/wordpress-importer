@@ -11,6 +11,7 @@ use Botble\DataSynchronize\Importer\Importer;
 use Botble\Ecommerce\Enums\ProductTypeEnum;
 use Botble\Ecommerce\Enums\StockStatusEnum;
 use Botble\Ecommerce\Models\Product;
+use Botble\Ecommerce\Models\ProductAttribute;
 use Botble\Ecommerce\Models\ProductAttributeSet;
 use Botble\Ecommerce\Models\ProductCategory;
 use Botble\Ecommerce\Models\ProductVariation;
@@ -35,6 +36,8 @@ class ProductImporter extends Importer implements WithMapping
     protected Collection $categories;
 
     protected Collection $productAttributeSets;
+
+    protected Collection $productAttributes;
 
     public function getLabel(): string
     {
@@ -127,6 +130,7 @@ class ProductImporter extends Importer implements WithMapping
         $this->productAttributeSets = ProductAttributeSet::query()
             ->with('attributes')
             ->get();
+        $this->productAttributes = ProductAttribute::query()->get();
 
         $count = 0;
 
@@ -178,7 +182,37 @@ class ProductImporter extends Importer implements WithMapping
             }
         }
 
-        $row['attribute_sets'] = $attributes;
+        $attributeSets = [];
+        $index = 0;
+
+        foreach ($attributes as $key => $value) {
+            $attributeSet = $this->productAttributeSets
+                ->where('title', $key)
+                ->first();
+
+            if ($attributeSet) {
+                $attribute = $this->productAttributes
+                    ->where('attribute_set_id', $attributeSet->id)
+                    ->where('title', $value)
+                    ->first();
+
+                if (! $attribute) {
+                    $attribute = $attributeSet->attributes()->create([
+                        'title' => $value,
+                        'slug' => Str::slug($value),
+                        'is_default' => $index === 0,
+                    ]);
+
+                    $this->productAttributes->push($attribute);
+                }
+
+                $attributeSets[$attributeSet->id] = $attribute->id;
+            }
+
+            $index++;
+        }
+
+        $row['attribute_sets'] = $attributeSets;
     }
 
     protected function resolveProductAttributeSet(array &$row): void
