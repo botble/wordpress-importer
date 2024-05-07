@@ -8,6 +8,7 @@ use Botble\Base\PanelSections\PanelSectionItem;
 use Botble\Base\Traits\LoadAndPublishDataTrait;
 use Botble\DataSynchronize\Importer\Importer;
 use Botble\DataSynchronize\PanelSections\ImportPanelSection;
+use Botble\WordpressImporter\Importers\ProductImporter;
 use Illuminate\Support\ServiceProvider;
 
 class WordpressImporterServiceProvider extends ServiceProvider
@@ -35,19 +36,11 @@ class WordpressImporterServiceProvider extends ServiceProvider
             ]);
         });
 
-        PanelSectionManager::setGroupId('data-synchronize')->beforeRendering(function () {
-            PanelSectionManager::default()->registerItem(
-                ImportPanelSection::class,
-                fn () => PanelSectionItem::make('woocommerce-products')
-                    ->setTitle(trans('plugins/wordpress-importer::wordpress-importer.data_synchronize.import_products.name'))
-                    ->withDescription(trans('plugins/wordpress-importer::wordpress-importer.data_synchronize.import_products.description'))
-                    ->withPriority(100)
-                    ->withPermission('settings.options')
-                    ->withRoute('tools.data-synchronize.import.woocommerce-products.index')
-            );
-        });
-
         add_filter('data_synchronize_import_form_before', function (?string $html, Importer $importer): ?string {
+            if (! $importer instanceof ProductImporter) {
+                return $html;
+            }
+
             return $html . view('plugins/wordpress-importer::partials.woocommerce-products-export-instruction');
         }, 999, 2);
     }

@@ -7,6 +7,7 @@ use Botble\Base\Http\Controllers\BaseController;
 use Botble\Blog\Models\Category;
 use Botble\WordpressImporter\Forms\WordpressImporterForm;
 use Botble\WordpressImporter\Http\Requests\WordpressImporterRequest;
+use Botble\WordpressImporter\Importers\ProductImporter;
 use Botble\WordpressImporter\WordpressImporter;
 
 class WordpressImporterController extends BaseController
@@ -18,8 +19,9 @@ class WordpressImporterController extends BaseController
         $this->pageTitle(trans('plugins/wordpress-importer::wordpress-importer.name'));
 
         $form = WordpressImporterForm::create();
+        $productImporter = ProductImporter::make();
 
-        return view('plugins/wordpress-importer::import', compact('form'));
+        return view('plugins/wordpress-importer::import', compact('form', 'productImporter'));
     }
 
     public function import(WordpressImporterRequest $request, WordpressImporter $wordpressImporter)

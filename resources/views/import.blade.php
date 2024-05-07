@@ -1,7 +1,7 @@
 @extends(BaseHelper::getAdminMasterLayoutTemplate())
 
 @section('content')
-    <x-core::card class="wordpress-importer">
+    <x-core::card class="wordpress-importer mb-3">
         <x-core::card.header>
             <x-core::card.title>
                 {{ trans('plugins/wordpress-importer::wordpress-importer.name') }}
@@ -24,4 +24,6 @@
             </x-core::button>
         </x-core::card.footer>
     </x-core::card>
+
+    {{ $productImporter->renderWithoutLayout() }}
 @stop

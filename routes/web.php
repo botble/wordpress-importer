@@ -25,7 +25,6 @@ AdminHelper::registerRoutes(function () {
     Route::prefix('tools/data-synchronize')->name('tools.data-synchronize.')->group(function () {
         Route::prefix('import')->name('import.')->group(function () {
             Route::group(['prefix' => 'woocommerce-products', 'as' => 'woocommerce-products.', 'permission' => 'settings.options'], function () {
-                Route::get('/', [ImportProductController::class, 'index'])->name('index');
                 Route::post('/', [ImportProductController::class, 'import'])->name('store');
                 Route::post('validate', [ImportProductController::class, 'validateData'])->name('validate');
                 Route::post('download-example', [ImportProductController::class, 'downloadExample'])->name('download-example');
