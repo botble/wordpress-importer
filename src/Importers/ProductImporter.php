@@ -68,7 +68,7 @@ class ProductImporter extends Importer implements WithMapping
     {
         return [
             ImportColumn::make('type', 'Type')
-                ->rules(['required', 'string', Rule::in(['simple, downloadable, virtual', 'simple', 'grouped', 'external', 'variation', 'variable'])]),
+                ->rules(['nullable', 'string', Rule::in(['simple, downloadable, virtual', 'simple', 'grouped', 'external', 'variation', 'variable'])]),
             ImportColumn::make('sku', 'SKU')
                 ->rules(['nullable', 'string']),
             ImportColumn::make('name', 'Name')
