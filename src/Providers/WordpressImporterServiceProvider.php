@@ -3,11 +3,8 @@
 namespace Botble\WordpressImporter\Providers;
 
 use Botble\Base\Facades\DashboardMenu;
-use Botble\Base\Facades\PanelSectionManager;
-use Botble\Base\PanelSections\PanelSectionItem;
 use Botble\Base\Traits\LoadAndPublishDataTrait;
 use Botble\DataSynchronize\Importer\Importer;
-use Botble\DataSynchronize\PanelSections\ImportPanelSection;
 use Botble\WordpressImporter\Importers\ProductImporter;
 use Illuminate\Support\ServiceProvider;
 

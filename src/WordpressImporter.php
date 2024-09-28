@@ -79,7 +79,8 @@ class WordpressImporter
         @ini_set('default_socket_timeout', $timeout);
 
         $this->copyImages = (bool) $request->input('copyimages');
-        $this->wpXML = simplexml_load_file($xmlFile, 'SimpleXMLElement', LIBXML_NOCDATA);
+        $xmlString = File::get($xmlFile);
+        $this->wpXML = new SimpleXMLElement($this->stripInvalidXml($xmlString), LIBXML_NOCDATA);
 
         $this->copyCategories = (bool) $request->input('copy_categories');
         if ($request->has('default_category_id')) {
@@ -90,6 +91,31 @@ class WordpressImporter
         return [
             'error' => false,
         ];
+    }
+
+    protected function stripInvalidXml(string $value): string
+    {
+        $ret = '';
+        if (empty($value)) {
+            return $ret;
+        }
+
+        $length = strlen($value);
+        for ($i=0; $i < $length; $i++) {
+            $current = ord($value[$i]);
+            if (($current == 0x9) ||
+                ($current == 0xA) ||
+                ($current == 0xD) ||
+                (($current >= 0x20) && ($current <= 0xD7FF)) ||
+                (($current >= 0xE000) && ($current <= 0xFFFD)) ||
+                (($current >= 0x10000) && ($current <= 0x10FFFF))) {
+                $ret .= chr($current);
+            } else {
+                $ret .= ' ';
+            }
+        }
+
+        return $ret;
     }
 
     public function import(): array
