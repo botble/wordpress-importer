@@ -13,7 +13,6 @@ use Botble\Language\Models\LanguageMeta;
 use Botble\Media\Facades\RvMedia;
 use Botble\Page\Models\Page;
 use Botble\Slug\Facades\SlugHelper;
-use Botble\Slug\Models\Slug;
 use Carbon\Carbon;
 use Exception;
 use Illuminate\Database\Eloquent\Model;
@@ -344,12 +343,11 @@ class WordpressImporter
                         $post->categories()->attach($this->categories[$category]['id']);
                     }
 
-                    Slug::query()->create([
-                        'reference_type' => Post::class,
-                        'reference_id' => $post->getKey(),
-                        'key' => Str::slug($slug),
-                        'prefix' => SlugHelper::getPrefix(Post::class),
-                    ]);
+                    if (SlugHelper::turnOffAutomaticUrlTranslationIntoLatin()) {
+                        $slug = urldecode($slug);
+                    }
+
+                    SlugHelper::createSlug($post, $slug);
 
                     if ($this->isUsingMultiLanguageV1) {
                         LanguageMeta::saveMetaData($post, Language::getDefaultLocaleCode());
