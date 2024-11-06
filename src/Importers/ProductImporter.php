@@ -51,7 +51,7 @@ class ProductImporter extends Importer implements WithMapping
 
     public function chunkSize(): int
     {
-        return 20;
+        return 10;
     }
 
     public function showRulesCheatSheet(): bool
@@ -249,7 +249,9 @@ class ProductImporter extends Importer implements WithMapping
                 ->first();
 
             if (! $attribute) {
-                /** @var ProductAttributeSet $attribute */
+                /**
+                 * @var ProductAttributeSet $attribute
+                 */
                 $attribute = ProductAttributeSet::query()->create([
                     'title' => $set,
                     'slug' => Str::slug($set),
@@ -381,11 +383,14 @@ class ProductImporter extends Importer implements WithMapping
 
     protected function storeProduct(array $row): Product
     {
-        /** @var Product $product */
-        $product = Product::query()->where('sku', $row['sku'])->first();
-
-        if ($product) {
-            return $product;
+        if (
+            ($sku = $row['sku']) &&
+            $existingProduct = Product::query()
+                ->where('sku', $sku)
+                ->when(Arr::get($row, 'id'), fn ($query) => $query->where('id', $row['id']))
+                ->first()
+        ) {
+            return $existingProduct;
         }
 
         $request = new Request();
@@ -433,7 +438,9 @@ class ProductImporter extends Importer implements WithMapping
         $version = [...$variation->toArray(), ...$request->toArray()];
         $sku = Arr::get($version, 'sku');
 
-        /** @var Product $existingVariation */
+        /**
+         * @var Product $existingVariation
+         */
         $existingVariation = Product::query()->where('is_variation', true)->where('sku', $sku)->first();
 
         if ($sku && $existingVariation) {
@@ -527,7 +534,9 @@ class ProductImporter extends Importer implements WithMapping
 
     protected function getProduct(string $sku): ?Product
     {
-        /** @var Product $product */
+        /**
+         * @var Product $product
+         */
         $product = Product::query()
             ->where('sku', $sku)
             ->first();
@@ -599,7 +608,7 @@ class ProductImporter extends Importer implements WithMapping
             'is_variation' => (bool) $row['parent'],
             'order' => (int) $row['position'] ?: 0,
             'product_type' => match ($row['type']) {
-                'simple, downloadable, virtual' => ProductTypeEnum::DIGITAL,
+                'simple, downloadable, virtual', 'simple, virtual' => ProductTypeEnum::DIGITAL,
                 default => ProductTypeEnum::PHYSICAL,
             },
         ];
