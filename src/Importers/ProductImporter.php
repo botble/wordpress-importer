@@ -68,7 +68,7 @@ class ProductImporter extends Importer implements WithMapping
     {
         return [
             ImportColumn::make('type', 'Type')
-                ->rules(['nullable', 'string', Rule::in(['simple, downloadable, virtual', 'simple', 'grouped', 'external', 'variation', 'variable'])]),
+                ->rules(['nullable', 'string', Rule::in(['simple, downloadable, virtual', 'simple', 'simple, virtual', 'grouped', 'external', 'variation', 'variable'])]),
             ImportColumn::make('sku', 'SKU')
                 ->rules(['nullable', 'string']),
             ImportColumn::make('name', 'Name')
@@ -78,13 +78,13 @@ class ProductImporter extends Importer implements WithMapping
             ImportColumn::make('featured', 'Is featured?')
                 ->rules(['required', 'boolean']),
             ImportColumn::make('short_description', 'Short description')
-                ->rules(['nullable', 'string', 'max:400']),
+                ->rules(['nullable', 'string', 'max:300000']),
             ImportColumn::make('description', 'Description')
                 ->rules(['nullable', 'string', 'max:300000']),
             ImportColumn::make('date_on_sale_from', 'Date sale price starts')
-                ->rules(['nullable', 'datetime']),
+                ->rules(['nullable', 'date']),
             ImportColumn::make('date_on_sale_to', 'Date sale price ends')
-                ->rules(['nullable', 'datetime']),
+                ->rules(['nullable', 'date']),
             ImportColumn::make('in_stock', 'In stock?')
                 ->rules(['required', 'boolean']),
             ImportColumn::make('stock', 'Stock')
@@ -580,6 +580,8 @@ class ProductImporter extends Importer implements WithMapping
             'name' => $row['name'],
             'description' => $row['short_description'],
             'content' => $row['description'],
+            'published' => (int) $row['published'],
+            'stock' => (int) $row['stock'],
             'status' => $row['published'] == 1 ? BaseStatusEnum::PUBLISHED : BaseStatusEnum::DRAFT,
             'images' => $row['images'],
             'sku' => $row['sku'],
