@@ -110,7 +110,7 @@ class ProductImporter extends Importer implements WithMapping
             ImportColumn::make('parent', 'Parent')
                 ->rules(['nullable', 'string']),
             ImportColumn::make('position', 'Position')
-                ->rules(['required', 'numeric']),
+                ->rules(['nullable', 'numeric']),
         ];
     }
 
@@ -186,6 +186,9 @@ class ProductImporter extends Importer implements WithMapping
         $index = 0;
 
         foreach ($attributes as $key => $value) {
+            /**
+             * @var ProductAttributeSet $attributeSet
+             */
             $attributeSet = $this->productAttributeSets
                 ->where('title', $key)
                 ->first();
@@ -592,7 +595,7 @@ class ProductImporter extends Importer implements WithMapping
             'start_date' => $row['date_on_sale_from'],
             'end_date' => $row['date_on_sale_to'],
             'is_variation' => (bool) $row['parent'],
-            'order' => (int) $row['position'],
+            'order' => (int) $row['position'] ?: 0,
             'product_type' => match ($row['type']) {
                 'simple, downloadable, virtual' => ProductTypeEnum::DIGITAL,
                 default => ProductTypeEnum::PHYSICAL,
