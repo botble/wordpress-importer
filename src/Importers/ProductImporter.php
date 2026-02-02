@@ -369,6 +369,33 @@ class ProductImporter extends Importer implements WithMapping
         return new UploadedFile($path, $fileName . '.' . $fileExtension, $mimeType, null, true);
     }
 
+    protected function replaceContentImages(?string $content, string $directory = 'products'): ?string
+    {
+        if (empty($content)) {
+            return $content;
+        }
+
+        return preg_replace_callback(
+            '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i',
+            function (array $matches) use ($directory) {
+                $originalUrl = $matches[1];
+
+                if (! filter_var($originalUrl, FILTER_VALIDATE_URL)) {
+                    return $matches[0];
+                }
+
+                $newUrl = $this->resolveMediaImage($originalUrl, $directory);
+
+                if ($newUrl !== $originalUrl) {
+                    return str_replace($originalUrl, $newUrl, $matches[0]);
+                }
+
+                return $matches[0];
+            },
+            $content
+        ) ?? $content;
+    }
+
     protected function getImages(string $data): array
     {
         $images = [];
@@ -587,8 +614,8 @@ class ProductImporter extends Importer implements WithMapping
         return [
             ...$row,
             'name' => $row['name'],
-            'description' => $row['short_description'],
-            'content' => $row['description'],
+            'description' => $this->replaceContentImages($row['short_description']),
+            'content' => $this->replaceContentImages($row['description']),
             'published' => (int) $row['published'],
             'stock' => (int) $row['stock'],
             'status' => $row['published'] == 1 ? BaseStatusEnum::PUBLISHED : BaseStatusEnum::DRAFT,

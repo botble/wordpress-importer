@@ -321,7 +321,7 @@ class WordpressImporter
                         'author_type' => User::class,
                         'name' => trim((string) $item->title, '"'),
                         'description' => Str::limit(trim((string) $excerpt->encoded, '" \n'), 400, ''),
-                        'content' => $this->autop(trim((string) $content->encoded, '" \n')),
+                        'content' => $this->replaceContentImages($this->autop(trim((string) $content->encoded, '" \n'))),
                         'image' => $this->getImage($image),
                         'status' => $status,
                     ];
@@ -359,7 +359,7 @@ class WordpressImporter
                         'user_id' => ! empty($this->users[$author]['id']) ? $this->users[$author]['id'] : auth()->id(),
                         'name' => trim((string) $item->title, '"'),
                         'description' => Str::limit(trim((string) $excerpt->encoded, '" \n'), 400, ''),
-                        'content' => $this->autop(trim((string) $content->encoded, '" \n')),
+                        'content' => $this->replaceContentImages($this->autop(trim((string) $content->encoded, '" \n'))),
                         'image' => $this->getImage($image),
                         'status' => $status,
                         'template' => 'default',
@@ -517,6 +517,33 @@ class WordpressImporter
         }
 
         return $pee;
+    }
+
+    protected function replaceContentImages(string $content): string
+    {
+        if (! $this->copyImages || empty($content)) {
+            return $content;
+        }
+
+        return preg_replace_callback(
+            '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i',
+            function (array $matches) {
+                $originalUrl = $matches[1];
+
+                if (! filter_var($originalUrl, FILTER_VALIDATE_URL)) {
+                    return $matches[0];
+                }
+
+                $newUrl = $this->getImage($originalUrl);
+
+                if ($newUrl && $newUrl !== $originalUrl) {
+                    return str_replace($originalUrl, $newUrl, $matches[0]);
+                }
+
+                return $matches[0];
+            },
+            $content
+        ) ?? $content;
     }
 
     protected function getImage(?string $image): ?string
