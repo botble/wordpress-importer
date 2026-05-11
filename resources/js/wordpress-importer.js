@@ -19,12 +19,26 @@ $(() => {
             .then(({ data }) => {
                 if (!data.error && data.data.data.length) {
                     data.data.data.forEach((item) => {
-                        $slot.append(`
-                            <label class="form-check">
-                                <input class="form-check-input" type="radio" name="default_category_id" value="${item.id}">
-                                <span class="form-check-label">${item.name}</span>
-                            </label>
-                        `)
+                        // Build the label/input/span via DOM nodes so the
+                        // server-supplied category name and id never reach
+                        // innerHTML. Mitigates stored XSS via a poisoned
+                        // Category record.
+                        const label = document.createElement('label')
+                        label.className = 'form-check'
+
+                        const input = document.createElement('input')
+                        input.className = 'form-check-input'
+                        input.type = 'radio'
+                        input.name = 'default_category_id'
+                        input.value = String(item.id)
+
+                        const span = document.createElement('span')
+                        span.className = 'form-check-label'
+                        span.textContent = String(item.name)
+
+                        label.appendChild(input)
+                        label.appendChild(span)
+                        $slot[0].appendChild(label)
                     })
 
                     if (data.data.next_page_url) {

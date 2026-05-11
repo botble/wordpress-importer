@@ -15,6 +15,19 @@ AdminHelper::registerRoutes(function () {
         Route::get('/', [WordpressImporterController::class, 'index'])->name('wordpress-importer');
         Route::post('/', [WordpressImporterController::class, 'import'])->name('wordpress-importer.post');
 
+        Route::get('/progress/{key}', [WordpressImporterController::class, 'progress'])
+            ->where('key', 'wp-import:[A-Za-z0-9\-]+')
+            ->name('wordpress-importer.progress');
+
+        Route::get('/images/{importId}/status', [WordpressImporterController::class, 'imageStatus'])
+            ->name('wordpress-importer.images.status');
+
+        Route::post('/images/{importId}/retry', [WordpressImporterController::class, 'retryFailedImages'])
+            ->name('wordpress-importer.images.retry');
+
+        Route::get('/credentials/{importId}/download', [WordpressImporterController::class, 'downloadCredentials'])
+            ->name('wordpress-importer.credentials.download');
+
         if (is_plugin_active('blog')) {
             Route::post('/ajax/categories', [WordpressImporterController::class, 'ajaxCategories'])
                 ->middleware(RequiresJsonRequestMiddleware::class)

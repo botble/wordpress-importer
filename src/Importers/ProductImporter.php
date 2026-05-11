@@ -319,7 +319,7 @@ class ProductImporter extends Importer implements WithMapping
                         if ($response->ok() && $response->body()) {
                             $contents = $response->body();
 
-                            $path = '/tmp';
+                            $path = storage_path('app/tmp/wordpress-import');
                             File::ensureDirectoryExists($path);
 
                             $path = $path . '/' . Str::limit($info['basename'], 50, '');

@@ -5,10 +5,12 @@ namespace Botble\WordpressImporter\Forms;
 use Botble\Base\Forms\FieldOptions\HtmlFieldOption;
 use Botble\Base\Forms\FieldOptions\NumberFieldOption;
 use Botble\Base\Forms\FieldOptions\OnOffFieldOption;
+use Botble\Base\Forms\FieldOptions\SelectFieldOption;
 use Botble\Base\Forms\FieldOptions\TextFieldOption;
 use Botble\Base\Forms\Fields\HtmlField;
 use Botble\Base\Forms\Fields\NumberField;
 use Botble\Base\Forms\Fields\OnOffField;
+use Botble\Base\Forms\Fields\SelectField;
 use Botble\Base\Forms\FormAbstract;
 
 class WordpressImporterForm extends FormAbstract
@@ -38,6 +40,19 @@ class WordpressImporterForm extends FormAbstract
                     ->label(trans('plugins/wordpress-importer::wordpress-importer.copy_images'))
                     ->helperText(trans('plugins/wordpress-importer::wordpress-importer.copy_images_description'))
                     ->defaultValue(true)
+            )
+            ->add(
+                'image_mode',
+                SelectField::class,
+                SelectFieldOption::make()
+                    ->label(trans('plugins/wordpress-importer::wordpress-importer.image_mode'))
+                    ->helperText(trans('plugins/wordpress-importer::wordpress-importer.image_mode_description'))
+                    ->choices([
+                        'sync' => trans('plugins/wordpress-importer::wordpress-importer.image_mode_sync'),
+                        'external' => trans('plugins/wordpress-importer::wordpress-importer.image_mode_external'),
+                        'queue' => trans('plugins/wordpress-importer::wordpress-importer.image_mode_queue'),
+                    ])
+                    ->defaultValue('sync')
             )
             ->when(is_plugin_active('blog'), function (FormAbstract $form) {
                 $form
@@ -78,6 +93,20 @@ class WordpressImporterForm extends FormAbstract
                     ->label(trans('plugins/wordpress-importer::wordpress-importer.max_timeout'))
                     ->defaultValue(900)
                     ->helperText(trans('plugins/wordpress-importer::wordpress-importer.timeout_description'))
+            )
+            ->add(
+                'memory_limit',
+                SelectField::class,
+                SelectFieldOption::make()
+                    ->label(trans('plugins/wordpress-importer::wordpress-importer.memory_limit'))
+                    ->helperText(trans('plugins/wordpress-importer::wordpress-importer.memory_limit_description'))
+                    ->choices([
+                        '512M' => '512M',
+                        '1024M' => '1024M',
+                        '2048M' => '2048M',
+                        '4096M' => '4096M',
+                    ])
+                    ->defaultValue('1024M')
             )
             ->add(
                 'wpexport',

@@ -16,8 +16,10 @@ class WordpressImporterServiceProvider extends ServiceProvider
     {
         $this
             ->setNamespace('plugins/wordpress-importer')
+            ->loadAndPublishConfigurations(['wordpress-importer'])
             ->loadAndPublishViews()
             ->loadAndPublishTranslations()
+            ->loadMigrations()
             ->publishAssets()
             ->loadRoutes();
 
