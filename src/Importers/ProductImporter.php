@@ -6,6 +6,7 @@ use Botble\Base\Enums\BaseStatusEnum;
 use Botble\Base\Events\CreatedContentEvent;
 use Botble\Base\Facades\BaseHelper;
 use Botble\DataSynchronize\Contracts\Importer\WithMapping;
+use Botble\DataSynchronize\DataTransferObjects\ChunkImportResponse;
 use Botble\DataSynchronize\Importer\ImportColumn;
 use Botble\DataSynchronize\Importer\Importer;
 use Botble\Ecommerce\Enums\ProductTypeEnum;
@@ -19,6 +20,8 @@ use Botble\Ecommerce\Services\Products\StoreProductService;
 use Botble\Ecommerce\Services\StoreProductTagService;
 use Botble\Media\Facades\RvMedia;
 use Botble\Slug\Facades\SlugHelper;
+use Botble\WordpressImporter\Services\RemoteImageDownloader;
+use Botble\WordpressImporter\Support\ContentImageUrlRewriter;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
@@ -38,6 +41,19 @@ class ProductImporter extends Importer implements WithMapping
     protected Collection $productAttributeSets;
 
     protected Collection $productAttributes;
+
+    protected ?RemoteImageDownloader $imageDownloader = null;
+
+    /** 1-based CSV data row being handled, for failure reporting. */
+    protected int $currentCsvRow = 0;
+
+    protected int $chunkOffset = 0;
+
+    /**
+     * Groups product image downloads in wordpress_import_images so a URL is
+     * fetched once across CSV chunks and re-imports.
+     */
+    protected const IMAGE_IMPORT_ID = 'woocommerce-products';
 
     public function getLabel(): string
     {
@@ -124,6 +140,24 @@ class ProductImporter extends Importer implements WithMapping
         return route('tools.data-synchronize.import.woocommerce-products.store');
     }
 
+    /**
+     * The CLI command reuses one importer for every chunk, and the base class
+     * skips rows whose in-chunk number matches an earlier failure. Image
+     * failures are reported per chunk, so start each chunk with a clean list,
+     * and remember the offset to report absolute CSV row numbers.
+     */
+    public function import(string $fileName, int $offset = 0, int $limit = 100): ChunkImportResponse
+    {
+        $this->chunkOffset = $offset;
+
+        // Failure reporting arrived in data-synchronize after core 7.3.1.
+        if (property_exists($this, 'failures')) {
+            $this->failures = [];
+        }
+
+        return parent::import($fileName, $offset, $limit);
+    }
+
     public function handle(array $data): int
     {
         $this->categories = ProductCategory::all();
@@ -136,7 +170,9 @@ class ProductImporter extends Importer implements WithMapping
 
         $productFiles = [];
 
-        foreach ($data as $row) {
+        foreach ($data as $index => $row) {
+            $this->currentCsvRow = $this->chunkOffset + $index + 1;
+
             if ($row['type'] === 'variation' && $row['parent']) {
                 $this->resolveProductAttributes($row);
                 $parentProduct = $this->getProduct($row['parent']) ?: $this->storeProduct($row);
@@ -369,43 +405,102 @@ class ProductImporter extends Importer implements WithMapping
         return new UploadedFile($path, $fileName . '.' . $fileExtension, $mimeType, null, true);
     }
 
-    protected function replaceContentImages(?string $content, string $directory = 'products'): ?string
+    protected function replaceContentImages(?string $content): ?string
     {
         if (empty($content)) {
             return $content;
         }
 
-        return preg_replace_callback(
-            '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i',
-            function (array $matches) use ($directory) {
-                $originalUrl = $matches[1];
-
-                if (! filter_var($originalUrl, FILTER_VALIDATE_URL)) {
-                    return $matches[0];
-                }
-
-                $newUrl = $this->resolveMediaImage($originalUrl, $directory);
-
-                if ($newUrl !== $originalUrl) {
-                    return str_replace($originalUrl, $newUrl, $matches[0]);
-                }
-
-                return $matches[0];
-            },
-            $content
-        ) ?? $content;
+        // Image columns store the media path; HTML needs the public URL.
+        return ContentImageUrlRewriter::rewrite($content, fn (string $url) => RvMedia::url($this->localizeImage($url)));
     }
 
-    protected function getImages(string $data): array
+    protected function getImages(?string $data): array
     {
-        $images = [];
-        $items = array_filter(explode(',', $data));
+        $images = array_filter(array_map('trim', explode(',', (string) $data)));
 
-        foreach ($items as $image) {
-            $images[] = $this->resolveMediaImage(trim($image), 'products');
+        return array_values(array_map(fn (string $image) => $this->localizeImage($image), $images));
+    }
+
+    /**
+     * Download a WooCommerce image into the media library. On failure the
+     * original URL is kept and the reason is listed in the import results.
+     */
+    protected function localizeImage(string $url): string
+    {
+        if (! Str::startsWith($url, ['http://', 'https://'])) {
+            return $url;
         }
 
-        return $images;
+        try {
+            return $this->imageDownloader()->download($url, 'products', self::IMAGE_IMPORT_ID);
+        } catch (Throwable $exception) {
+            $this->reportImageFailure($url . ' — ' . $exception->getMessage());
+
+            return $url;
+        }
+    }
+
+    protected function reportImageFailure(string $message): void
+    {
+        // Older cores have no failure table; the log is the only place to surface it.
+        if (! method_exists($this, 'onFailure')) {
+            logger()->warning("WooCommerce import, row {$this->currentCsvRow}: {$message}");
+
+            return;
+        }
+
+        // The data-synchronize UI renders errors as HTML — escape the URL/message.
+        $this->onFailure($this->currentCsvRow, 'images', [e($message)]);
+    }
+
+    /**
+     * Existing products are skipped on re-import, so re-running the import after
+     * fixing the source (e.g. allowing the server through Cloudflare) would leave
+     * images on the old host. Re-download whatever still points off-site.
+     */
+    protected function repairExternalImages(Product $product): void
+    {
+        try {
+            $images = array_values($product->images);
+            $localImages = array_map(fn ($image) => $this->localizeImage((string) $image), $images);
+            $image = (string) $product->getRawOriginal('image');
+
+            $changed = false;
+
+            if ($localImages !== $images) {
+                $product->images = json_encode($localImages);
+                $changed = true;
+            }
+
+            if ($image !== '' && ($localImage = $this->localizeImage($image)) !== $image) {
+                $product->image = $localImage;
+                $changed = true;
+            }
+
+            // Rewrite the stored HTML, not the SafeContent getter's entity-decoded copy —
+            // re-saving that would turn "&quot;" / "&lt;" text into markup.
+            foreach (['description', 'content'] as $attribute) {
+                $raw = (string) $product->getRawOriginal($attribute);
+                $localized = (string) $this->replaceContentImages($raw);
+
+                if ($localized !== $raw) {
+                    $product->{$attribute} = $localized;
+                    $changed = true;
+                }
+            }
+
+            if ($changed) {
+                $product->save();
+            }
+        } catch (Throwable $throwable) {
+            $this->reportImageFailure('Could not update images of existing product: ' . $throwable->getMessage());
+        }
+    }
+
+    protected function imageDownloader(): RemoteImageDownloader
+    {
+        return $this->imageDownloader ??= new RemoteImageDownloader();
     }
 
     protected function storeProduct(array $row): Product
@@ -417,8 +512,13 @@ class ProductImporter extends Importer implements WithMapping
                 ->when(Arr::get($row, 'id'), fn ($query) => $query->where('id', $row['id']))
                 ->first()
         ) {
+            $this->repairExternalImages($existingProduct);
+
             return $existingProduct;
         }
+
+        $row['description'] = $this->replaceContentImages($row['description']);
+        $row['content'] = $this->replaceContentImages($row['content']);
 
         $request = new Request();
 
@@ -471,8 +571,13 @@ class ProductImporter extends Importer implements WithMapping
         $existingVariation = Product::query()->where('is_variation', true)->where('sku', $sku)->first();
 
         if ($sku && $existingVariation) {
+            $this->repairExternalImages($existingVariation);
+
             return $existingVariation;
         }
+
+        $version['description'] = $this->replaceContentImages(Arr::get($version, 'description'));
+        $version['content'] = $this->replaceContentImages(Arr::get($version, 'content'));
 
         $version['variation_default_id'] = Arr::get($version, 'is_variation_default') ? $version['id'] : null;
         $version['attribute_sets'] = $addedAttributes;
@@ -614,8 +719,8 @@ class ProductImporter extends Importer implements WithMapping
         return [
             ...$row,
             'name' => $row['name'],
-            'description' => $this->replaceContentImages($row['short_description']),
-            'content' => $this->replaceContentImages($row['description']),
+            'description' => $row['short_description'],
+            'content' => $row['description'],
             'published' => (int) $row['published'],
             'stock' => (int) $row['stock'],
             'status' => $row['published'] == 1 ? BaseStatusEnum::PUBLISHED : BaseStatusEnum::DRAFT,

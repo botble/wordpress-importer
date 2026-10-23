@@ -44,4 +44,16 @@ return [
     | production if the source is untrusted.
     */
     'allowed_image_hosts' => array_filter(explode(',', (string) env('WP_IMPORTER_ALLOWED_IMAGE_HOSTS', '*'))) ?: ['*'],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Private network hosts
+    |--------------------------------------------------------------------------
+    |
+    | Image URLs resolving to private/reserved IPs (127.0.0.1, 10.x, 169.254.x…)
+    | are refused, on every redirect hop, so an export can't point the importer
+    | at internal services. Enable only to import from a WordPress site on your
+    | own machine or LAN (e.g. http://wordpress.test).
+    */
+    'allow_private_image_hosts' => (bool) env('WP_IMPORTER_ALLOW_PRIVATE_IMAGE_HOSTS', false),
 ];

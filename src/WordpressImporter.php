@@ -14,11 +14,11 @@ use Botble\Language\Models\LanguageMeta;
 use Botble\Media\Facades\RvMedia;
 use Botble\Page\Models\Page;
 use Botble\Slug\Facades\SlugHelper;
+use Botble\WordpressImporter\Services\RemoteImageDownloader;
+use Botble\WordpressImporter\Support\ContentImageUrlRewriter;
 use Carbon\Carbon;
-use Exception;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -35,6 +35,13 @@ class WordpressImporter
     protected array $users = [];
 
     protected array $attachments = [];
+
+    /**
+     * @var array<string, string> WP attachment ID => attachment URL
+     */
+    protected array $attachmentsById = [];
+
+    protected ?RemoteImageDownloader $imageDownloader = null;
 
     protected array $categories = [];
 
@@ -120,6 +127,12 @@ class WordpressImporter
         $this->imageMode = (string) $request->input('image_mode', 'sync');
         if (! in_array($this->imageMode, ['sync', 'external', 'queue'], true)) {
             $this->imageMode = 'sync';
+        }
+
+        // "Copy images" off means nothing is downloaded in any mode — featured
+        // images included, which queue mode used to fetch regardless.
+        if (! $this->copyImages) {
+            $this->imageMode = 'external';
         }
 
         $this->progressKey = (string) $request->input('progress_key', 'wp-import:' . Str::uuid());
@@ -285,10 +298,7 @@ class WordpressImporter
     protected function saveAttachments(): array
     {
         foreach ($this->wpXML->channel->item as $item) {
-            $wpData = $item->children('wp', true);
-            if ($wpData->post_type == 'attachment') {
-                $this->attachments[(string) $wpData->post_parent] = (string) $wpData->attachment_url;
-            }
+            $this->registerAttachment($item->children('wp', true));
         }
 
         return $this->attachments;
@@ -297,13 +307,40 @@ class WordpressImporter
     protected function saveAttachmentsStreaming(): array
     {
         foreach ($this->streamItems() as $item) {
-            $wpData = $item->children('wp', true);
-            if ($wpData->post_type == 'attachment') {
-                $this->attachments[(string) $wpData->post_parent] = (string) $wpData->attachment_url;
-            }
+            $this->registerAttachment($item->children('wp', true));
         }
 
         return $this->attachments;
+    }
+
+    protected function registerAttachment(SimpleXMLElement $wpData): void
+    {
+        if ($wpData->post_type != 'attachment') {
+            return;
+        }
+
+        $url = (string) $wpData->attachment_url;
+
+        // By ID for `_thumbnail_id` lookups; by parent as a fallback for exports
+        // that lack the meta (last upload attached to the post wins).
+        $this->attachmentsById[(string) $wpData->post_id] = $url;
+        $this->attachments[(string) $wpData->post_parent] = $url;
+    }
+
+    /**
+     * The featured image is the attachment named by the post's `_thumbnail_id`
+     * meta. It may live anywhere in the media library, so only fall back to
+     * "an image uploaded to this post" when the meta is missing.
+     */
+    protected function resolveFeaturedImageUrl(string $wpPostId, array $postMeta): string
+    {
+        $thumbnailId = (string) $this->getMetaValue($postMeta, '_thumbnail_id');
+
+        if ($thumbnailId !== '' && isset($this->attachmentsById[$thumbnailId])) {
+            return $this->attachmentsById[$thumbnailId];
+        }
+
+        return $this->attachments[$wpPostId] ?? '';
     }
 
     protected function saveAuthors(): array
@@ -319,32 +356,32 @@ class WordpressImporter
 
     protected function saveAuthorsStreaming(): array
     {
-        $reader = new XMLReader();
-        // LIBXML_NONET blocks network resolution of external entities/DTDs in the streamed input.
-        if (! $reader->open($this->xmlFilePath, null, LIBXML_NONET)) {
-            return $this->users;
+        foreach ($this->wpChannelElements('author') as $author) {
+            $this->processAuthor($author);
         }
-
-        while ($reader->read()) {
-            if ($reader->nodeType !== XMLReader::ELEMENT) {
-                continue;
-            }
-            if ($reader->localName !== 'author' || $reader->namespaceURI === '') {
-                continue;
-            }
-            $node = $reader->expand();
-            if ($node) {
-                $sx = simplexml_import_dom($node);
-                $this->processAuthor($sx);
-                unset($sx, $node);
-            }
-            // Move to the next sibling so the DOM subtree we just expanded is released.
-            $reader->next();
-        }
-
-        $reader->close();
 
         return $this->users;
+    }
+
+    /**
+     * Channel-level <wp:author>, <wp:category> and <wp:tag> entries, shaped the
+     * way the in-memory parser exposes them ($element->field) in either mode.
+     */
+    protected function wpChannelElements(string $name): iterable
+    {
+        if (! $this->useStreamingParser) {
+            yield from $this->wpXML->channel->children('wp', true)->{$name};
+
+            return;
+        }
+
+        $matches = fn (XMLReader $reader) => $reader->localName === $name && $reader->namespaceURI !== '';
+
+        foreach ($this->streamElements($matches) as $element) {
+            // A streamed node is its own document root: select the wp namespace
+            // so its fields read like the in-memory tree's.
+            yield $element->children('wp', true);
+        }
     }
 
     protected function processAuthor(SimpleXMLElement $author): void
@@ -403,10 +440,8 @@ class WordpressImporter
     {
         $this->preloadImportedIds(Category::class, '_wp_import_category_nicename');
 
-        $wpData = $this->wpXML->channel->children('wp', true);
-
         $order = 1;
-        foreach ($wpData->category as $category) {
+        foreach ($this->wpChannelElements('category') as $category) {
             $nicename = (string) $category->category_nicename;
             if ($nicename === '') {
                 continue;
@@ -464,11 +499,9 @@ class WordpressImporter
     {
         $this->preloadImportedIds(Tag::class, '_wp_import_tag_slug');
 
-        $wpData = $this->wpXML->channel->children('wp', true);
-
         $order = 1;
 
-        foreach ($wpData->tag as $tag) {
+        foreach ($this->wpChannelElements('tag') as $tag) {
             $slug = (string) $tag->tag_slug;
             if ($slug === '') {
                 continue;
@@ -630,7 +663,9 @@ class WordpressImporter
         $metaKey = $type === 'page' ? '_wp_import_page_id' : '_wp_import_post_id';
         $modelClass = $type === 'page' ? Page::class : Post::class;
 
-        if ($wpPostId !== '' && $this->findWpImportedModel($modelClass, $metaKey, $wpPostId)) {
+        if ($wpPostId !== '' && $existing = $this->findWpImportedModel($modelClass, $metaKey, $wpPostId)) {
+            $this->repairExternalImages($existing);
+
             return false;
         }
 
@@ -641,7 +676,7 @@ class WordpressImporter
 
         $content = $item->children('content', true);
         $excerpt = $item->children('excerpt', true);
-        $image = $this->attachments[$wpPostId] ?? '';
+        $image = $this->resolveFeaturedImageUrl($wpPostId, $postMeta);
 
         $author = null;
         $dc = $item->children('dc', true);
@@ -882,48 +917,55 @@ class WordpressImporter
 
     protected function replaceContentImages(string $content): string
     {
-        if (empty($content)) {
+        if ($this->imageMode === 'external') {
             return $content;
         }
 
-        if ($this->imageMode === 'external' || ! $this->copyImages) {
-            return $content;
+        return ContentImageUrlRewriter::rewrite($content, function (string $originalUrl): ?string {
+            if ($this->imageMode === 'queue') {
+                $this->registerImageForQueue($originalUrl);
+
+                return null;
+            }
+
+            // Image columns store the media path; HTML needs the public URL.
+            return RvMedia::url($this->getImage($originalUrl));
+        });
+    }
+
+    /**
+     * Already-imported posts/pages are skipped, so re-running the import after
+     * fixing the source (e.g. allowing the server through Cloudflare) would leave
+     * images on the old host. Re-download whatever still points off-site.
+     */
+    protected function repairExternalImages(Model $model): void
+    {
+        if ($this->imageMode === 'external') {
+            return;
         }
 
-        return preg_replace_callback(
-            '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i',
-            function (array $matches) {
-                $originalUrl = $matches[1];
+        $image = (string) $model->image;
 
-                if (! filter_var($originalUrl, FILTER_VALIDATE_URL)) {
-                    return $matches[0];
-                }
+        if (Str::startsWith($image, ['http://', 'https://'])) {
+            $model->image = $this->resolveFeaturedImage($image);
+        }
 
-                if ($this->imageMode === 'queue') {
-                    $this->registerImageForQueue($originalUrl);
+        // Compare before assigning: content casts may re-clean HTML and mark it dirty for nothing.
+        $content = (string) $model->getRawOriginal('content');
+        $localContent = $this->replaceContentImages($content);
 
-                    return $matches[0];
-                }
+        if ($localContent !== $content) {
+            $model->content = $localContent;
+        }
 
-                $newUrl = $this->getImage($originalUrl);
-
-                if ($newUrl && $newUrl !== $originalUrl) {
-                    return str_replace($originalUrl, $newUrl, $matches[0]);
-                }
-
-                return $matches[0];
-            },
-            $content
-        ) ?? $content;
+        if ($model->isDirty(['image', 'content'])) {
+            $model->save();
+        }
     }
 
     protected function resolveFeaturedImage(?string $image): ?string
     {
-        if (empty($image)) {
-            return $image;
-        }
-
-        if ($this->imageMode === 'external') {
+        if (empty($image) || $this->imageMode === 'external') {
             return $image;
         }
 
@@ -938,7 +980,7 @@ class WordpressImporter
 
     protected function getImage(?string $image): ?string
     {
-        if (empty($image) || ! $this->copyImages) {
+        if (empty($image) || $this->imageMode === 'external') {
             return $image;
         }
 
@@ -946,138 +988,25 @@ class WordpressImporter
             return $this->imageUrlCache[$image];
         }
 
-        $result = $this->downloadAndStoreImage($image);
-        $this->imageUrlCache[$image] = $result;
-
-        return $result;
-    }
-
-    protected function downloadAndStoreImage(string $image): ?string
-    {
-        // Gate every sync image fetch through the same SSRF allow-list, timeout
-        // and max-bytes guard that queued downloads use — without this, a hostile
-        // WP export can pivot the importer at internal services.
-        if (! filter_var($image, FILTER_VALIDATE_URL)) {
-            $this->failedImages[] = ['url' => $image, 'error' => 'Invalid URL'];
-
-            return $image;
-        }
-
-        $allowedHosts = (array) config('plugins.wordpress-importer.allowed_image_hosts', ['*']);
-        if (! $this->isHostAllowed($image, $allowedHosts)) {
-            $this->failedImages[] = ['url' => $image, 'error' => 'Host not allowed'];
-
-            return $image;
-        }
-
-        $contents = $this->fetchRemoteImageContents($image);
-        if ($contents === null) {
-            return $image;
-        }
-
-        $info = pathinfo($image);
-
-        $path = storage_path('app/tmp/wordpress-import');
-        File::ensureDirectoryExists($path);
-
-        $basename = $info['basename'] ?? Str::random(16);
-        $path = $path . '/' . Str::limit($basename, 80, '');
-
         try {
-            file_put_contents($path, $contents);
-        } catch (Exception $exception) {
+            $result = $this->imageDownloader()->download($image, 'posts', $this->importId);
+        } catch (Throwable $exception) {
+            // Keep the original URL so the post still renders while the source is up.
             $this->failedImages[] = ['url' => $image, 'error' => $exception->getMessage()];
-
-            return $image;
+            $result = $image;
         }
 
-        // Detect MIME from the actual bytes (not URL extension) and require an image type.
-        $mimeType = function_exists('mime_content_type')
-            ? @mime_content_type($path)
-            : RvMedia::getMimeType($path);
-
-        if (! $this->isAllowedImageMime($mimeType)) {
-            File::delete($path);
-            $this->failedImages[] = ['url' => $image, 'error' => 'Disallowed MIME type: ' . ($mimeType ?: 'unknown')];
-
-            return $image;
-        }
-
-        $fileUpload = new UploadedFile($path, $basename, $mimeType, null, true);
-
-        try {
-            $result = RvMedia::handleUpload($fileUpload, 0, 'posts');
-        } catch (Throwable $throwable) {
-            $this->failedImages[] = ['url' => $image, 'error' => $throwable->getMessage()];
-            File::delete($path);
-
-            return $image;
-        }
-
-        File::delete($path);
-
-        if (! empty($result['error'])) {
-            $message = is_array($result['message'] ?? null) ? implode(', ', $result['message']) : (string) ($result['message'] ?? 'Upload error');
-            $this->failedImages[] = ['url' => $image, 'error' => $message];
-
-            return $image;
-        }
-
-        return $result['data']->url;
+        return $this->imageUrlCache[$image] = $result;
     }
 
-    /**
-     * Fetch image bytes from a remote URL with a bounded timeout and size cap.
-     * Returns null on any failure and records the reason in $failedImages.
-     */
-    protected function fetchRemoteImageContents(string $url): ?string
+    protected function imageDownloader(): RemoteImageDownloader
     {
-        $timeout = (int) config('plugins.wordpress-importer.image_timeout_seconds', 30);
-        $maxBytes = (int) config('plugins.wordpress-importer.image_max_bytes', 20 * 1024 * 1024);
-
-        $context = stream_context_create([
-            'http' => ['timeout' => $timeout, 'follow_location' => 1, 'max_redirects' => 3],
-            'https' => ['timeout' => $timeout, 'follow_location' => 1, 'max_redirects' => 3],
-        ]);
-
-        try {
-            $contents = @file_get_contents($url, false, $context, 0, $maxBytes);
-        } catch (Exception $exception) {
-            $this->failedImages[] = ['url' => $url, 'error' => $exception->getMessage()];
-
-            return null;
-        }
-
-        if ($contents === false || $contents === '') {
-            $this->failedImages[] = ['url' => $url, 'error' => 'Empty response or fetch failed'];
-
-            return null;
-        }
-
-        return $contents;
-    }
-
-    protected function isAllowedImageMime(?string $mimeType): bool
-    {
-        if (! $mimeType) {
-            return false;
-        }
-
-        $allowed = config('core.media.media.mime_types.image', [
-            'image/jpeg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-            'image/svg+xml',
-            'image/bmp',
-        ]);
-
-        return in_array($mimeType, (array) $allowed, true);
+        return $this->imageDownloader ??= new RemoteImageDownloader();
     }
 
     protected function registerImageForQueue(string $url): void
     {
-        if (! filter_var($url, FILTER_VALIDATE_URL)) {
+        if (! ContentImageUrlRewriter::isAbsoluteUrl($url)) {
             return;
         }
 
@@ -1108,7 +1037,7 @@ class WordpressImporter
                 continue;
             }
 
-            if (! $this->isHostAllowed($url, $allowedHosts)) {
+            if (! $this->imageDownloader()->isHostAllowed($url, $allowedHosts)) {
                 $this->failedImages[] = ['url' => $url, 'error' => 'Host not allowed'];
 
                 continue;
@@ -1139,33 +1068,6 @@ class WordpressImporter
         return $dispatched;
     }
 
-    protected function isHostAllowed(string $url, array $allowedHosts): bool
-    {
-        if (in_array('*', $allowedHosts, true)) {
-            return true;
-        }
-
-        $host = parse_url($url, PHP_URL_HOST);
-
-        if (! $host) {
-            return false;
-        }
-
-        foreach ($allowedHosts as $allowed) {
-            if (! is_string($allowed) || $allowed === '') {
-                continue;
-            }
-            if (strcasecmp($host, $allowed) === 0) {
-                return true;
-            }
-            if (str_starts_with($allowed, '*.') && str_ends_with(strtolower($host), strtolower(substr($allowed, 1)))) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     protected function emitProgress(string $stage, int $count): void
     {
         if ($this->progressKey === '') {
@@ -1181,27 +1083,64 @@ class WordpressImporter
 
     protected function streamItems(): \Generator
     {
+        yield from $this->streamElements(fn (XMLReader $reader) => $reader->localName === 'item' && $reader->namespaceURI === '');
+    }
+
+    /**
+     * Yield each element accepted by $matches as SimpleXML, one at a time.
+     *
+     * After a match, next() jumps over its subtree so the parser can release it;
+     * the loop must not read() again after that, or an element directly
+     * following (compact XML, no whitespace between items) would be skipped.
+     */
+    protected function streamElements(callable $matches): \Generator
+    {
         $reader = new XMLReader();
         // LIBXML_NONET blocks network resolution of external entities/DTDs in the streamed input.
         if (! $reader->open($this->xmlFilePath, null, LIBXML_NONET)) {
             return;
         }
 
-        while ($reader->read()) {
-            if ($reader->nodeType !== XMLReader::ELEMENT || $reader->localName !== 'item' || $reader->namespaceURI !== '') {
+        $more = $reader->read();
+
+        while ($more) {
+            if ($reader->nodeType === XMLReader::ELEMENT && $matches($reader)) {
+                $node = $this->readerNodeToSimpleXml($reader);
+
+                if ($node !== null) {
+                    yield $node;
+                }
+
+                $more = $reader->next();
+
                 continue;
             }
 
-            $node = $reader->expand();
-            if ($node) {
-                yield simplexml_import_dom($node);
-            }
-
-            // Move past the expanded subtree so the parser can release it.
-            $reader->next();
+            $more = $reader->read();
         }
 
         $reader->close();
+    }
+
+    /**
+     * simplexml_import_dom($reader->expand()) returns null ("Imported Node must
+     * have associated Document"), which broke every import over the streaming
+     * threshold. Re-parse the node's XML instead; NOCDATA matches the in-memory
+     * parser so CDATA postmeta (e.g. _thumbnail_id) reads as plain strings.
+     */
+    protected function readerNodeToSimpleXml(XMLReader $reader): ?SimpleXMLElement
+    {
+        $xml = $reader->readOuterXml();
+
+        if ($xml === '') {
+            return null;
+        }
+
+        $node = simplexml_load_string($xml, SimpleXMLElement::class, LIBXML_NOCDATA | LIBXML_NONET);
+
+        // Compare to false explicitly: an element whose children are all namespaced
+        // (<item> holding only wp:* nodes) is falsy as a SimpleXMLElement.
+        return $node === false ? null : $node;
     }
 
     /**

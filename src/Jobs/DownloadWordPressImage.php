@@ -6,17 +6,17 @@ use Botble\Base\Facades\BaseHelper;
 use Botble\Blog\Models\Post;
 use Botble\Media\Facades\RvMedia;
 use Botble\Page\Models\Page;
+use Botble\WordpressImporter\Exceptions\ImageDownloadException;
 use Botble\WordpressImporter\Models\WordpressImportImage;
-use Exception;
+use Botble\WordpressImporter\Services\RemoteImageDownloader;
+use Botble\WordpressImporter\Support\ContentImageUrlRewriter;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -63,22 +63,29 @@ class DownloadWordPressImage implements ShouldQueue
         }
 
         try {
-            $localUrl = $this->download($this->originalUrl);
-        } catch (Throwable $exception) {
+            $localUrl = (new RemoteImageDownloader())->download($this->originalUrl, 'posts', $this->importId);
+        } catch (ImageDownloadException $exception) {
             $row->status = WordpressImportImage::STATUS_FAILED;
             $row->last_error = Str::limit($exception->getMessage(), 5000, '');
             $row->save();
-            BaseHelper::logError($exception);
 
-            throw $exception;
-        }
+            // Only transient failures (timeouts, 5xx, 429) are worth the backoff —
+            // a bad MIME or a WAF challenge will fail the same way every time.
+            if ($exception->retryable) {
+                BaseHelper::logError($exception);
 
-        if (! $localUrl) {
-            $row->status = WordpressImportImage::STATUS_FAILED;
-            $row->last_error = 'Empty response or unsupported MIME type';
-            $row->save();
+                throw $exception;
+            }
 
             return;
+        } catch (Throwable $throwable) {
+            // Never leave the row stuck in "downloading" — mark it and let the queue retry.
+            $row->status = WordpressImportImage::STATUS_FAILED;
+            $row->last_error = Str::limit($throwable->getMessage(), 5000, '');
+            $row->save();
+            BaseHelper::logError($throwable);
+
+            throw $throwable;
         }
 
         $row->status = WordpressImportImage::STATUS_DONE;
@@ -91,74 +98,29 @@ class DownloadWordPressImage implements ShouldQueue
         Cache::increment("wp-import:{$this->importId}:images_done");
     }
 
-    protected function download(string $url): ?string
+    /**
+     * Rewrite in PHP rather than SQL REPLACE(): REPLACE() also hits URLs that
+     * merely start with this one ("a.jpg" inside "a.jpg?v=2" / "a.jpg.webp"),
+     * corrupting them when another job localizes the longer URL.
+     */
+    protected function rewriteContent(string $table, string $originalUrl, array $replacements): void
     {
-        $maxBytes = (int) config('plugins.wordpress-importer.image_max_bytes', 20 * 1024 * 1024);
-        $timeout = (int) config('plugins.wordpress-importer.image_timeout_seconds', 30);
+        // LIKE on the part before any query string also matches the "&amp;" form;
+        // it is only a pre-filter — replaceUrls() decides what actually changes.
+        $needle = addcslashes(Str::before($originalUrl, '?'), '\\%_');
 
-        $context = stream_context_create([
-            'http' => ['timeout' => $timeout, 'follow_location' => 1],
-            'https' => ['timeout' => $timeout, 'follow_location' => 1],
-        ]);
+        DB::table($table)
+            ->where('content', 'like', '%' . $needle . '%')
+            ->select(['id', 'content'])
+            ->chunkById(100, function ($rows) use ($table, $replacements): void {
+                foreach ($rows as $row) {
+                    $content = ContentImageUrlRewriter::replaceUrls((string) $row->content, $replacements);
 
-        $contents = @file_get_contents($url, false, $context, 0, $maxBytes);
-
-        if (empty($contents)) {
-            return null;
-        }
-
-        $info = pathinfo($url);
-        $basename = $info['basename'] ?? Str::random(16);
-
-        $path = storage_path('app/tmp/wordpress-import');
-        File::ensureDirectoryExists($path);
-        $tempPath = $path . '/' . Str::limit($basename, 80, '');
-
-        try {
-            file_put_contents($tempPath, $contents);
-        } catch (Exception) {
-            return null;
-        }
-
-        $mimeType = RvMedia::getMimeType($tempPath) ?: RvMedia::getMimeType($url);
-
-        if (! $this->isAllowedMime($mimeType)) {
-            File::delete($tempPath);
-
-            return null;
-        }
-
-        $fileUpload = new UploadedFile($tempPath, $basename, $mimeType, null, true);
-
-        try {
-            $result = RvMedia::handleUpload($fileUpload, 0, 'posts');
-        } finally {
-            File::delete($tempPath);
-        }
-
-        if (! empty($result['error'])) {
-            return null;
-        }
-
-        return $result['data']->url ?? null;
-    }
-
-    protected function isAllowedMime(?string $mimeType): bool
-    {
-        if (! $mimeType) {
-            return false;
-        }
-
-        $allowed = config('core.media.media.mime_types.image', [
-            'image/jpeg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-            'image/svg+xml',
-            'image/bmp',
-        ]);
-
-        return in_array($mimeType, (array) $allowed, true);
+                    if ($content !== $row->content) {
+                        DB::table($table)->where('id', $row->id)->update(['content' => $content]);
+                    }
+                }
+            });
     }
 
     protected function rewriteReferences(string $originalUrl, string $localUrl): void
@@ -182,25 +144,20 @@ class DownloadWordPressImage implements ShouldQueue
                     ->update(['image' => $localUrl]);
             }
 
-            $pdo = DB::getPdo();
-            $quotedOriginal = $pdo->quote($originalUrl);
-            $quotedLocal = $pdo->quote($localUrl);
+            // Columns hold the media path; HTML needs the public URL. Inside HTML
+            // attributes a query string's "&" is stored as "&amp;" — replace both.
+            $publicUrl = RvMedia::url($localUrl);
+            $replacements = [
+                $originalUrl => $publicUrl,
+                htmlspecialchars($originalUrl, ENT_NOQUOTES) => $publicUrl,
+            ];
+
             $schema = DB::getSchemaBuilder();
 
-            if ($blogActive && $schema->hasTable('posts')) {
-                DB::table('posts')
-                    ->where('content', 'like', '%' . $originalUrl . '%')
-                    ->update([
-                        'content' => DB::raw("REPLACE(content, $quotedOriginal, $quotedLocal)"),
-                    ]);
-            }
-
-            if ($pageActive && $schema->hasTable('pages')) {
-                DB::table('pages')
-                    ->where('content', 'like', '%' . $originalUrl . '%')
-                    ->update([
-                        'content' => DB::raw("REPLACE(content, $quotedOriginal, $quotedLocal)"),
-                    ]);
+            foreach (['posts' => $blogActive, 'pages' => $pageActive] as $table => $active) {
+                if ($active && $schema->hasTable($table)) {
+                    $this->rewriteContent($table, $originalUrl, $replacements);
+                }
             }
         } catch (Throwable $exception) {
             BaseHelper::logError($exception);

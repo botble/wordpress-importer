@@ -197,12 +197,35 @@ class ResilienceAndQueueShapeTest extends TestCase
 
     public function test_job_validates_mime_type_before_upload(): void
     {
-        $source = $this->read(self::JOB_PATH);
+        // The job delegates to the shared downloader, which owns the MIME guard.
+        $this->assertStringContainsString(
+            '(new RemoteImageDownloader())->download(',
+            $this->read(self::JOB_PATH),
+            'Queue mode must download through RemoteImageDownloader so it shares the sync path\'s guards.'
+        );
 
         $this->assertMatchesRegularExpression(
-            '/protected function isAllowedMime\(/',
-            $source,
-            'isAllowedMime() guard is required — without it, queue mode would let an attacker upload any MIME to RvMedia.'
+            '/isAllowedImageMime\(\$mimeType\)[\s\S]*?RvMedia::handleUpload/s',
+            $this->read(__DIR__ . '/../../src/Services/RemoteImageDownloader.php'),
+            'MIME guard is required before upload — without it, queue mode would let an attacker upload any MIME to RvMedia.'
+        );
+    }
+
+    public function test_job_also_replaces_html_encoded_url_variant(): void
+    {
+        $this->assertMatchesRegularExpression(
+            '/\$originalUrl => \$publicUrl,\s*htmlspecialchars\(\$originalUrl, ENT_NOQUOTES\) => \$publicUrl/s',
+            $this->read(self::JOB_PATH),
+            'Content stores "&" in query strings as "&amp;" — the job must replace that form too.'
+        );
+    }
+
+    public function test_job_only_retries_transient_download_failures(): void
+    {
+        $this->assertMatchesRegularExpression(
+            '/catch \(ImageDownloadException \$exception\)[\s\S]*?if \(\$exception->retryable\)[\s\S]*?throw \$exception;/s',
+            $this->read(self::JOB_PATH),
+            'Permanent failures (MIME, WAF challenge, 4xx) must not burn the 3 retries.'
         );
     }
 
@@ -210,29 +233,25 @@ class ResilienceAndQueueShapeTest extends TestCase
     {
         $source = $this->read(self::JOB_PATH);
 
-        $this->assertStringContainsString(
-            "DB::table('posts')",
+        $this->assertMatchesRegularExpression(
+            "/\['posts' => \\\$blogActive, 'pages' => \\\$pageActive\][\s\S]*?rewriteContent\(/s",
             $source,
-            'rewriteReferences() must update posts.content so inline <img src> URLs are swapped.'
-        );
-
-        $this->assertStringContainsString(
-            "DB::table('pages')",
-            $source,
-            'rewriteReferences() must also update pages.content (pages share the WP content schema).'
+            'rewriteReferences() must update posts.content and pages.content so inline image URLs are swapped.'
         );
     }
 
-    public function test_job_uses_pdo_quote_for_replace_arguments(): void
+    public function test_job_rewrites_whole_urls_only_without_raw_sql(): void
     {
         $source = $this->read(self::JOB_PATH);
 
-        // PDO::quote is the injection-safe escape for REPLACE() arguments — see code review §H.
-        $this->assertMatchesRegularExpression(
-            '/\$pdo->quote\(\$originalUrl\)/',
-            $source,
-            'REPLACE() must escape its arguments with PDO::quote, not string interpolation.'
-        );
+        // SQL REPLACE() also rewrote URLs that merely start with the original
+        // ("a.jpg" inside "a.jpg?v=2") — the job must use the boundary-aware PHP replace.
+        $this->assertStringNotContainsString('REPLACE(content', $source);
+        $this->assertStringNotContainsString('DB::raw(', $source);
+        $this->assertStringContainsString('ContentImageUrlRewriter::replaceUrls(', $source);
+
+        // LIKE pre-filter escapes its wildcards.
+        $this->assertMatchesRegularExpression("/addcslashes\(Str::before\(\\\$originalUrl, '\?'\), '[^']*%_'\)/", $source);
     }
 
     public function test_controller_exposes_retry_failed_endpoint(): void

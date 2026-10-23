@@ -2,21 +2,21 @@
 
 namespace Botble\WordpressImporter\Tests\Unit;
 
-use Botble\WordpressImporter\WordpressImporter;
+use Botble\WordpressImporter\Services\RemoteImageFetcher;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
 /**
  * Tests for the SSRF allow-list applied to image URLs in `image_mode=queue`.
  *
- * The allow-list lives in WordpressImporter::isHostAllowed() and supports three
+ * The allow-list lives in RemoteImageFetcher::isHostAllowed() and supports three
  * patterns: '*' wildcard (default), exact hostname, '*.subdomain' wildcard.
  *
- * @see platform/plugins/wordpress-importer/src/WordpressImporter.php
+ * @see platform/plugins/wordpress-importer/src/Services/RemoteImageFetcher.php
  */
 class SsrfHostAllowListTest extends TestCase
 {
-    private WordpressImporter $importer;
+    private RemoteImageFetcher $importer;
     private ReflectionMethod $method;
 
     protected function setUp(): void
@@ -24,9 +24,9 @@ class SsrfHostAllowListTest extends TestCase
         // Loading the file standalone — class autoload isn't wired without an
         // activated plugin, but require_once works because the class body never
         // touches its dependencies at construct time.
-        require_once __DIR__ . '/../../src/WordpressImporter.php';
+        require_once __DIR__ . '/../../src/Services/RemoteImageFetcher.php';
 
-        $this->importer = new WordpressImporter();
+        $this->importer = new RemoteImageFetcher();
         $this->method = new ReflectionMethod($this->importer, 'isHostAllowed');
         $this->method->setAccessible(true);
     }

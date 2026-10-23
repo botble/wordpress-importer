@@ -53,6 +53,14 @@ To import WooCommerce products to your Botble ecommerce site:
 
 ![Screenshot](./art/screenshot-5.png)
 
+### Images
+
+Featured images, images inside post/page/product content (including `srcset`, lazy-load `data-src`, links to full-size files and CSS backgrounds) and WooCommerce product gallery images are downloaded into your media library and the content is updated to point at the local copies.
+
+If an image can't be downloaded, the original URL is kept and the reason is listed in the import results. A common cause is **Cloudflare bot protection** on the WordPress site ("Blocked by Cloudflare bot protection"): allow your Botble server's IP in Cloudflare (**Security** > **WAF** > **Tools**) or pause protection while importing, then run the import again. Posts, pages and products that were already imported aren't duplicated, but any of their images still pointing at the old site are downloaded and fixed.
+
+For safety, image URLs that resolve to private network addresses are refused. To import from a WordPress site on your own machine or LAN (e.g. `http://wordpress.test`), set `WP_IMPORTER_ALLOW_PRIVATE_IMAGE_HOSTS=true` in `.env`.
+
 # Contact us
 
 - Website: [https://botble.com](https://botble.com)

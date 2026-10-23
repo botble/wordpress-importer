@@ -96,9 +96,15 @@ class Phase01RegressionTest extends TestCase
             'WordpressImporter must NOT use the hardcoded "/tmp" path — restricted hosts deny it.'
         );
 
+        // Image downloads moved to the shared service — same rules apply there.
+        $downloader = file_get_contents(__DIR__ . '/../../src/Services/RemoteImageDownloader.php');
+        $this->assertNotFalse($downloader);
+
+        $this->assertDoesNotMatchRegularExpression('/[\'"]\/tmp[\'"]/', $downloader);
+
         $this->assertStringContainsString(
             "storage_path('app/tmp/wordpress-import')",
-            $source,
+            $downloader,
             'Temp downloads must live under storage_path("app/tmp/wordpress-import").'
         );
     }

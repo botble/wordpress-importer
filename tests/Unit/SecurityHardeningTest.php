@@ -23,6 +23,8 @@ class SecurityHardeningTest extends TestCase
     private const REQUEST_PATH = __DIR__ . '/../../src/Http/Requests/WordpressImporterRequest.php';
     private const CONTROLLER_PATH = __DIR__ . '/../../src/Http/Controllers/WordpressImporterController.php';
     private const JOB_PATH = __DIR__ . '/../../src/Jobs/DownloadWordPressImage.php';
+    private const DOWNLOADER_PATH = __DIR__ . '/../../src/Services/RemoteImageDownloader.php';
+    private const FETCHER_PATH = __DIR__ . '/../../src/Services/RemoteImageFetcher.php';
     private const JS_PATH = __DIR__ . '/../../resources/js/wordpress-importer.js';
 
     private function read(string $path): string
@@ -37,47 +39,71 @@ class SecurityHardeningTest extends TestCase
 
     public function test_sync_download_consults_host_allow_list(): void
     {
-        $source = $this->read(self::IMPORTER_PATH);
+        $fetcher = $this->read(self::FETCHER_PATH);
 
         $this->assertMatchesRegularExpression(
-            '/downloadAndStoreImage[\s\S]*?isHostAllowed\(\s*\$image/s',
-            $source,
-            'downloadAndStoreImage() must consult isHostAllowed() before fetching — otherwise sync mode bypasses SSRF protection.'
+            '/function fetch\([\s\S]*?for \(\$hop[\s\S]*?assertFetchable\(\$url\)[\s\S]*?request\(/s',
+            $fetcher,
+            'Every hop (including redirects) must pass assertFetchable() before it is requested.'
+        );
+
+        $this->assertMatchesRegularExpression(
+            '/function assertFetchable[\s\S]*?isHostAllowed\([\s\S]*?FILTER_FLAG_NO_PRIV_RANGE \| FILTER_FLAG_NO_RES_RANGE/s',
+            $fetcher,
+            'assertFetchable() must check the allow-list and refuse private/reserved IPs.'
+        );
+
+        $this->assertStringContainsString(
+            "'follow_location' => 0",
+            $fetcher,
+            'PHP must not follow redirects itself — that would skip the per-hop SSRF checks.'
+        );
+
+        $this->assertMatchesRegularExpression(
+            '/imageDownloader\(\)->download\(/',
+            $this->read(self::IMPORTER_PATH),
+            'The sync importer must download through RemoteImageDownloader, not its own fetch.'
         );
     }
 
     public function test_sync_download_records_host_block_as_failed_image(): void
     {
-        $source = $this->read(self::IMPORTER_PATH);
+        $this->assertMatchesRegularExpression(
+            '/isHostAllowed[\s\S]*?ImageDownloadException::permanent\(\s*\'Host not allowed\'/s',
+            $this->read(self::FETCHER_PATH),
+            'A host outside the allow-list must raise a descriptive download error.'
+        );
 
         $this->assertMatchesRegularExpression(
-            '/isHostAllowed[\s\S]*?failedImages\[\][\s\S]*?Host not allowed/s',
-            $source,
+            '/catch \(Throwable \$exception\)[\s\S]*?failedImages\[\][\s\S]*?getMessage\(\)/s',
+            $this->read(self::IMPORTER_PATH),
             'SSRF-blocked URLs must be visible to the admin in the failed_images list.'
         );
     }
 
     public function test_fetch_helper_uses_timeout_and_max_bytes(): void
     {
-        $source = $this->read(self::IMPORTER_PATH);
+        $source = $this->read(self::FETCHER_PATH);
 
         $this->assertMatchesRegularExpression(
-            '/fetchRemoteImageContents[\s\S]*?image_timeout_seconds[\s\S]*?image_max_bytes/s',
+            '/image_max_bytes[\s\S]*?image_timeout_seconds/s',
             $source,
-            'Sync image fetch must honour configured timeout + max-bytes — otherwise a slow host stalls the worker.'
+            'Image fetch must honour configured timeout + max-bytes — otherwise a slow host stalls the worker.'
         );
 
-        // file_get_contents max-length parameter (5th positional arg) must be set.
+        // Read one byte past the cap so an oversized file is rejected, not silently truncated.
         $this->assertMatchesRegularExpression(
-            '/file_get_contents\(\s*\$url\s*,\s*false\s*,\s*\$context\s*,\s*0\s*,\s*\$maxBytes\s*\)/',
+            '/file_get_contents\(\s*\$url\s*,\s*false\s*,\s*\$context\s*,\s*0\s*,\s*\$maxBytes \+ 1\s*\)/',
             $source,
-            'Sync image fetch must cap the read with file_get_contents()\'s $maxlen parameter.'
+            'Image fetch must cap the read with file_get_contents()\'s $maxlen parameter.'
         );
+
+        $this->assertMatchesRegularExpression('/strlen\(\$body\) > \$maxBytes/', $source);
     }
 
     public function test_sync_download_validates_mime_on_actual_bytes(): void
     {
-        $source = $this->read(self::IMPORTER_PATH);
+        $source = $this->read(self::DOWNLOADER_PATH);
 
         $this->assertMatchesRegularExpression(
             '/mime_content_type\([^)]+\)/',
@@ -240,16 +266,12 @@ class SecurityHardeningTest extends TestCase
             'Download job must check is_plugin_active("blog") before touching Post records.'
         );
 
+        // Raw DB::table() content writes iterate posts/pages, each gated by its
+        // plugin flag and a hasTable() check.
         $this->assertMatchesRegularExpression(
-            '/hasTable\(\s*[\'"]posts[\'"]\s*\)/',
+            "/foreach \(\['posts' => \\\$blogActive, 'pages' => \\\$pageActive\] as \\\$table => \\\$active\)[\s\S]*?if \(\\\$active && \\\$schema->hasTable\(\\\$table\)\)/",
             $source,
-            'Raw DB::table("posts") writes must be gated by a hasTable check.'
-        );
-
-        $this->assertMatchesRegularExpression(
-            '/hasTable\(\s*[\'"]pages[\'"]\s*\)/',
-            $source,
-            'Raw DB::table("pages") writes must be gated by a hasTable check.'
+            'Raw DB::table("posts"/"pages") writes must be gated by the plugin flag and a hasTable check.'
         );
 
         $this->assertStringContainsString(

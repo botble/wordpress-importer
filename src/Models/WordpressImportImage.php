@@ -13,6 +13,7 @@ class WordpressImportImage extends BaseModel
         'original_url',
         'url_hash',
         'local_url',
+        'media_file_id',
         'status',
         'attempts',
         'last_error',
