@@ -7,6 +7,7 @@ use Botble\Base\Events\CreatedContentEvent;
 use Botble\Base\Facades\BaseHelper;
 use Botble\DataSynchronize\Contracts\Importer\WithMapping;
 use Botble\DataSynchronize\DataTransferObjects\ChunkImportResponse;
+use Botble\DataSynchronize\DataTransferObjects\ChunkValidateResponse;
 use Botble\DataSynchronize\Importer\ImportColumn;
 use Botble\DataSynchronize\Importer\Importer;
 use Botble\Ecommerce\Enums\ProductTypeEnum;
@@ -22,6 +23,7 @@ use Botble\Media\Facades\RvMedia;
 use Botble\Slug\Facades\SlugHelper;
 use Botble\WordpressImporter\Services\RemoteImageDownloader;
 use Botble\WordpressImporter\Support\ContentImageUrlRewriter;
+use Botble\WordpressImporter\Support\WooCommerceCsvHeaderInspector;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
@@ -68,11 +70,6 @@ class ProductImporter extends Importer implements WithMapping
     public function chunkSize(): int
     {
         return 10;
-    }
-
-    public function showRulesCheatSheet(): bool
-    {
-        return false;
     }
 
     public function mergeWithUndefinedColumns(): bool
@@ -128,6 +125,97 @@ class ProductImporter extends Importer implements WithMapping
             ImportColumn::make('position', 'Position')
                 ->rules(['nullable', 'numeric']),
         ];
+    }
+
+    public function examples(): array
+    {
+        // The example table runs every cell through Str::limit(), so give unused columns an empty string.
+        $emptyRow = array_fill_keys(array_map(fn (ImportColumn $column) => $column->getName(), $this->columns()), '');
+
+        return array_map(fn (array $row) => [...$emptyRow, ...$row], [
+            [
+                'type' => 'simple',
+                'sku' => 'TSHIRT-001',
+                'name' => 'Classic Cotton T-Shirt',
+                'published' => 1,
+                'featured' => '0',
+                'short_description' => 'Soft, breathable cotton tee for everyday wear.',
+                'description' => '<p>Made from 100% combed cotton with a relaxed fit.</p>',
+                'in_stock' => 1,
+                'stock' => 50,
+                'weight' => 0.2,
+                'length' => 30,
+                'width' => 25,
+                'height' => 2,
+                'sale_price' => 15,
+                'regular_price' => 20,
+                'category_ids' => 'Clothing > T-shirts',
+                'tags' => 'cotton, summer',
+                'images' => 'https://your-wordpress-site.com/wp-content/uploads/2026/01/t-shirt.jpg',
+                'position' => '0',
+            ],
+            [
+                'type' => 'simple, downloadable, virtual',
+                'sku' => 'EBOOK-001',
+                'name' => 'Beginner Photography eBook',
+                'published' => 1,
+                'featured' => 1,
+                'short_description' => 'A 120-page guide to shooting in manual mode.',
+                'description' => '<p>Learn exposure, composition and lighting step by step.</p>',
+                'in_stock' => 1,
+                'regular_price' => 9,
+                'category_ids' => 'Books',
+                'images' => 'https://your-wordpress-site.com/wp-content/uploads/2026/01/ebook-cover.jpg',
+                'position' => 1,
+            ],
+        ]);
+    }
+
+    public function getDownloadExampleUrl(): ?string
+    {
+        return route('tools.data-synchronize.import.woocommerce-products.download-example');
+    }
+
+    /**
+     * Rejects a file that is not a WooCommerce product export up front, so the
+     * admin sees which columns are missing instead of a "field is required"
+     * error for every row.
+     */
+    public function validate(string $fileName, int $offset = 0, int $limit = 100): ChunkValidateResponse
+    {
+        if ($offset === 0 && $firstRow = $this->getRows($fileName, 0, 1)->first()) {
+            $missing = WooCommerceCsvHeaderInspector::missing(array_keys($firstRow), $this->getRequiredHeadings());
+
+            if ($missing) {
+                return new ChunkValidateResponse(
+                    offset: $offset,
+                    count: 0,
+                    total: 0,
+                    fileName: $fileName,
+                    errors: [
+                        trans('plugins/wordpress-importer::wordpress-importer.data_synchronize.import_products.missing_columns', [
+                            'columns' => implode(', ', $missing),
+                        ]),
+                    ],
+                );
+            }
+        }
+
+        return parent::validate($fileName, $offset, $limit);
+    }
+
+    public function transformRows(array $rows): array
+    {
+        return parent::transformRows(array_map(WooCommerceCsvHeaderInspector::normalizeRowKeys(...), $rows));
+    }
+
+    protected function getRequiredHeadings(): array
+    {
+        return collect($this->getColumns())
+            ->filter(fn (ImportColumn $column) => in_array('required', $column->getRules(), true))
+            ->map(fn (ImportColumn $column) => $column->getHeading())
+            ->values()
+            ->all();
     }
 
     public function getValidateUrl(): string

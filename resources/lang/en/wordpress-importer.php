@@ -47,6 +47,10 @@ return [
             'name' => 'WooCommerce Products',
             'description' => 'Import WooCommerce Products data from CSV file.',
             'export_instruction' => 'To obtain your WooCommerce Products CSV file, navigate to the WordPress admin dashboard, then go to Products -> All Products. Click on the "Export" button located at the top left corner. Select the product data you wish to export and choose the appropriate file format (CSV). Finally, click on the "Generate CSV" button to download the exported file.',
+            'export_instruction_note' => 'Upload the exported file as it is: opening and re-saving it in Excel or Numbers can break the columns. If your WordPress admin is not in English, switch your profile language to English (Users -> Profile -> Language) before exporting, otherwise the column names are translated and cannot be recognized.',
+            'own_spreadsheet_hint' => 'Importing your own spreadsheet instead of a WooCommerce export? Use :link, it has a downloadable template.',
+            'own_spreadsheet_link' => 'the Ecommerce product import',
+            'missing_columns' => 'This file is not a WooCommerce product export, these required columns are missing: :columns. Export it again from WordPress admin (Products -> All Products -> Export -> Generate CSV) and upload it without editing. To import your own spreadsheet, use the Ecommerce product import instead.',
         ],
     ],
 ];
