@@ -14,6 +14,7 @@ use Botble\Language\Models\LanguageMeta;
 use Botble\Media\Facades\RvMedia;
 use Botble\Page\Models\Page;
 use Botble\Slug\Facades\SlugHelper;
+use Botble\Slug\Models\Slug;
 use Botble\WordpressImporter\Services\RemoteImageDownloader;
 use Botble\WordpressImporter\Support\ContentImageUrlRewriter;
 use Carbon\Carbon;
@@ -464,7 +465,7 @@ class WordpressImporter
              */
             $newCategory = Category::query()->create($this->categories[$nicename]);
 
-            SlugHelper::createSlug($newCategory);
+            $this->createWpSlug($newCategory, $nicename);
 
             if ($this->isUsingMultiLanguageV1) {
                 LanguageMeta::saveMetaData($newCategory, Language::getDefaultLocaleCode());
@@ -479,16 +480,19 @@ class WordpressImporter
         }
 
         foreach ($this->categories as $category) {
-            if (! empty($category['parent'])) {
-                $slug = SlugHelper::getSlug($category['parent'], SlugHelper::getPrefix(Category::class), Category::class);
-                if ($slug) {
-                    $category['parent_id'] = $slug->reference_id;
-                    $thisCategory = Category::query()->find($category['id']);
-                    if (isset($thisCategory->id)) {
-                        $thisCategory->parent_id = $slug->reference_id;
-                        $thisCategory->save();
-                    }
-                }
+            if (empty($category['parent'])) {
+                continue;
+            }
+
+            $parentId = $this->resolveWpTermId(
+                $category['parent'],
+                $this->categories,
+                Category::class,
+                '_wp_import_category_nicename'
+            );
+
+            if ($parentId) {
+                Category::query()->whereKey($category['id'])->update(['parent_id' => $parentId]);
             }
         }
 
@@ -523,7 +527,7 @@ class WordpressImporter
              */
             $newTag = Tag::query()->create($this->tags[$slug]);
 
-            SlugHelper::createSlug($newTag);
+            $this->createWpSlug($newTag, $slug);
 
             if ($this->isUsingMultiLanguageV1) {
                 LanguageMeta::saveMetaData($newTag, Language::getDefaultLocaleCode());
@@ -684,10 +688,7 @@ class WordpressImporter
             $author = (string) $dc->creator;
         }
 
-        $category = null;
-        if (isset($item->category['nicename'])) {
-            $category = (string) $item->category['nicename'];
-        }
+        $terms = $this->postTermIds($item);
 
         $status = BaseStatusEnum::PUBLISHED;
         if (isset($wpData->status) && $wpData->status != 'publish') {
@@ -723,15 +724,15 @@ class WordpressImporter
 
             if (! $this->copyCategories && ! empty($this->defaultCategoryId)) {
                 $post->categories()->attach($this->defaultCategoryId);
-            } elseif (! empty($this->categories[$category]['id'])) {
-                $post->categories()->attach($this->categories[$category]['id']);
+            } elseif ($terms['categories']) {
+                $post->categories()->attach($terms['categories']);
             }
 
-            if (SlugHelper::turnOffAutomaticUrlTranslationIntoLatin()) {
-                $slug = urldecode($slug);
+            if ($terms['tags']) {
+                $post->tags()->attach($terms['tags']);
             }
 
-            SlugHelper::createSlug($post, $slug);
+            $this->createWpSlug($post, $slug);
 
             if ($this->isUsingMultiLanguageV1) {
                 LanguageMeta::saveMetaData($post, Language::getDefaultLocaleCode());
@@ -762,7 +763,7 @@ class WordpressImporter
             }
             $page->save();
 
-            SlugHelper::createSlug($page);
+            $this->createWpSlug($page, $slug);
 
             if ($this->isUsingMultiLanguageV1) {
                 LanguageMeta::saveMetaData($page, Language::getDefaultLocaleCode());
@@ -1176,7 +1177,7 @@ class WordpressImporter
         }
     }
 
-    protected function findWpImportedModel(string $modelClass, string $metaKey, string $metaValue): ?Model
+    protected function findWpImportedId(string $modelClass, string $metaKey, string $metaValue): ?int
     {
         $cacheKey = $modelClass . '|' . $metaKey;
 
@@ -1184,7 +1185,12 @@ class WordpressImporter
             $this->preloadImportedIds($modelClass, $metaKey);
         }
 
-        $id = $this->importedIdsMap[$cacheKey][$metaValue] ?? null;
+        return $this->importedIdsMap[$cacheKey][$metaValue] ?? null;
+    }
+
+    protected function findWpImportedModel(string $modelClass, string $metaKey, string $metaValue): ?Model
+    {
+        $id = $this->findWpImportedId($modelClass, $metaKey, $metaValue);
 
         if ($id === null) {
             return null;
@@ -1195,6 +1201,85 @@ class WordpressImporter
         } catch (Throwable) {
             return null;
         }
+    }
+
+    /**
+     * Category and tag IDs for a post, from every <category> element on the item.
+     * WordPress puts both categories (domain="category") and tags (domain="post_tag")
+     * in that element, so reading only the first one dropped the rest. Terms from an
+     * earlier import run are found through their _wp_import_* meta.
+     */
+    protected function postTermIds(SimpleXMLElement $item): array
+    {
+        $ids = ['categories' => [], 'tags' => []];
+
+        foreach ($item->category as $term) {
+            $nicename = (string) $term['nicename'];
+            if ($nicename === '') {
+                continue;
+            }
+
+            $domain = (string) $term['domain'];
+
+            if ($domain === 'category') {
+                $id = $this->resolveWpTermId($nicename, $this->categories, Category::class, '_wp_import_category_nicename');
+                $id && $ids['categories'][] = $id;
+            } elseif ($domain === 'post_tag') {
+                $id = $this->resolveWpTermId($nicename, $this->tags, Tag::class, '_wp_import_tag_slug');
+                $id && $ids['tags'][] = $id;
+            }
+        }
+
+        return array_map(fn (array $list) => array_values(array_unique($list)), $ids);
+    }
+
+    protected function resolveWpTermId(string $wpSlug, array $importedThisRun, string $modelClass, string $metaKey): ?int
+    {
+        if (! empty($importedThisRun[$wpSlug]['id'])) {
+            return (int) $importedThisRun[$wpSlug]['id'];
+        }
+
+        return $this->findWpImportedId($modelClass, $metaKey, $wpSlug);
+    }
+
+    /**
+     * Keep the WordPress slug so imported URLs match the old site, falling back to
+     * the title when WordPress had none. WordPress slugs are only unique per type,
+     * while Botble serves posts, pages and categories from the same root prefix, so
+     * a clash (a page and a category both called "news") gets a numeric suffix
+     * instead of two records answering the same URL.
+     */
+    protected function createWpSlug(Model $model, ?string $wpSlug): void
+    {
+        $key = $this->wpSlugCandidate($wpSlug);
+        if ($key === '') {
+            SlugHelper::createSlug($model);
+
+            return;
+        }
+
+        if (! SlugHelper::turnOffAutomaticUrlTranslationIntoLatin()) {
+            $key = Str::slug($key);
+        }
+
+        $prefix = SlugHelper::getPrefix($model::class);
+        $base = $key;
+        $index = 1;
+
+        while (Slug::query()->where(['key' => $key, 'prefix' => $prefix])->exists()) {
+            $key = $base . '-' . $index++;
+        }
+
+        SlugHelper::createSlug($model, $key);
+    }
+
+    /**
+     * WordPress exports non-Latin slugs percent-encoded (%e0%a4%...). Decode them so
+     * Botble stores the readable slug, the same thing the browser shows.
+     */
+    protected function wpSlugCandidate(?string $wpSlug): string
+    {
+        return trim(rawurldecode(trim((string) $wpSlug)), '/');
     }
 
     protected function markWpImported(Model $model, string $metaKey, string $metaValue): void

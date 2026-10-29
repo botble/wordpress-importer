@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.2 — 2026-10-29
+
+Keeps the old site's URLs and taxonomy when moving from WordPress.
+
+### Fixed
+- Posts now get **every** category and tag from the export. Only the first `<category>` element was read, so extra categories were dropped and tags were created but never attached to any post.
+- Pages, categories and tags keep their WordPress slug instead of a new one built from the title, so `/about` stays `/about` even when the page is titled "About Our Company".
+- Category parents are linked by their WordPress slug, which no longer breaks when a category's new slug differed from its WordPress nicename.
+- Percent-encoded (non-Latin) WordPress slugs are decoded before saving.
+- WordPress slugs are unique per content type, but Botble serves posts, pages and categories from the same root. A clash (a page and a category both called `news`) now gets a numeric suffix (`news-1`) instead of two records answering one URL.
+- Re-running an import still attaches categories and tags created by an earlier run.
+
 ## 1.7.0 — 2026-10-23
 
 Image import overhaul for WordPress XML (posts/pages) and WooCommerce CSV (products).
